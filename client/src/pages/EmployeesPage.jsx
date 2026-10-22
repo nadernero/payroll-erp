@@ -384,41 +384,41 @@ export default function EmployeesPage() {
       {activeTab === 'list' ? (
         <>
           {/* Enhanced Statistics Banner */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3">
+        <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-100 shadow-xs min-w-0">
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-            <span>عدد الموظفين المقيدين</span>
-            <Users className="w-4 h-4 text-blue-500" />
+            <span className="truncate">عدد الموظفين</span>
+            <Users className="w-4 h-4 text-blue-500 shrink-0 mr-1" />
           </div>
-          <p className="text-2xl font-black font-mono text-slate-900">{employees.length}</p>
+          <p className="text-lg sm:text-2xl font-black font-mono text-slate-900 truncate">{employees.length}</p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs">
+        <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-100 shadow-xs min-w-0">
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-            <span>إجمالي المرتب الأساسي</span>
-            <DollarSign className="w-4 h-4 text-rose-500" />
+            <span className="truncate">إجمالي الأساسي</span>
+            <DollarSign className="w-4 h-4 text-rose-500 shrink-0 mr-1" />
           </div>
-          <p className="text-2xl font-black font-mono text-rose-700">
-            {totalPayrollBasic.toLocaleString()} <span className="text-xs font-sans text-slate-400">ج.م</span>
+          <p className="text-lg sm:text-2xl font-black font-mono text-rose-700 truncate" title={`${totalPayrollBasic.toLocaleString()} ج.م`}>
+            {totalPayrollBasic.toLocaleString()} <span className="text-[10px] sm:text-xs font-sans text-slate-400 font-normal">ج.م</span>
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs">
+        <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-100 shadow-xs min-w-0">
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-            <span>متوسط المرتب الأساسي</span>
-            <TrendingUp className="w-4 h-4 text-emerald-500" />
+            <span className="truncate">متوسط الأساسي</span>
+            <TrendingUp className="w-4 h-4 text-emerald-500 shrink-0 mr-1" />
           </div>
-          <p className="text-2xl font-black font-mono text-emerald-700">
-            {avgBasic.toLocaleString()} <span className="text-xs font-sans text-slate-400">ج.م</span>
+          <p className="text-lg sm:text-2xl font-black font-mono text-emerald-700 truncate" title={`${avgBasic.toLocaleString()} ج.م`}>
+            {avgBasic.toLocaleString()} <span className="text-[10px] sm:text-xs font-sans text-slate-400 font-normal">ج.م</span>
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs">
+        <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-100 shadow-xs min-w-0">
           <div className="flex items-center justify-between text-slate-500 text-xs mb-1">
-            <span>الأقسام والإدارات</span>
-            <Briefcase className="w-4 h-4 text-indigo-500" />
+            <span className="truncate">الأقسام والإدارات</span>
+            <Briefcase className="w-4 h-4 text-indigo-500 shrink-0 mr-1" />
           </div>
-          <p className="text-2xl font-black font-mono text-indigo-700">
+          <p className="text-lg sm:text-2xl font-black font-mono text-indigo-700 truncate">
             {departments.filter(d => d !== 'all').length}
           </p>
         </div>

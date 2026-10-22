@@ -250,27 +250,27 @@ export default function ExpensesPage() {
       </div>
 
       {/* KPI Cards: Totals Day 10, Day 20, Grand Total */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-          <span className="text-xs font-medium text-slate-500">إجمالي مصروف يوم 10</span>
-          <p className="text-2xl font-bold font-mono text-blue-700 mt-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-100 shadow-sm min-w-0">
+          <span className="text-xs font-medium text-slate-500 block truncate">إجمالي مصروف يوم 10</span>
+          <p className="text-xl sm:text-2xl font-bold font-mono text-blue-700 mt-1 sm:mt-2 truncate" title={`${totalDay10.toLocaleString()} ج.م`}>
             {totalDay10.toLocaleString()} <span className="text-xs font-sans text-slate-400">ج.م</span>
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-          <span className="text-xs font-medium text-slate-500">إجمالي مصروف يوم 20</span>
-          <p className="text-2xl font-bold font-mono text-amber-700 mt-2">
+        <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-100 shadow-sm min-w-0">
+          <span className="text-xs font-medium text-slate-500 block truncate">إجمالي مصروف يوم 20</span>
+          <p className="text-xl sm:text-2xl font-bold font-mono text-amber-700 mt-1 sm:mt-2 truncate" title={`${totalDay20.toLocaleString()} ج.م`}>
             {totalDay20.toLocaleString()} <span className="text-xs font-sans text-slate-400">ج.م</span>
           </p>
         </div>
 
-        <div className="bg-amber-500/10 p-4 rounded-2xl border border-amber-300 shadow-sm">
+        <div className="bg-amber-500/10 p-3.5 sm:p-4 rounded-2xl border border-amber-300 shadow-sm min-w-0">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-900">إجمالي المصروفات (تخصم من الرواتب)</span>
-            <ArrowLeftRight className="w-4 h-4 text-amber-600" />
+            <span className="text-xs font-bold text-amber-900 truncate">إجمالي المصروفات (تخصم من الرواتب)</span>
+            <ArrowLeftRight className="w-4 h-4 text-amber-600 shrink-0 mr-1" />
           </div>
-          <p className="text-2xl font-black font-mono text-amber-900 mt-2">
+          <p className="text-xl sm:text-2xl font-black font-mono text-amber-900 mt-1 sm:mt-2 truncate" title={`${grandTotal.toLocaleString()} ج.م`}>
             {grandTotal.toLocaleString()} <span className="text-xs font-sans text-amber-700 font-normal">ج.م</span>
           </p>
         </div>

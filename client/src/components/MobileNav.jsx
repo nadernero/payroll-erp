@@ -16,6 +16,7 @@ export default function MobileNav({ activeTab, setActiveTab }) {
   ];
 
   const drawerTabs = [
+    { id: 'warehouse', label: 'بوابة مدير المخازن والفروع', icon: Building2, desc: 'مراجعة العمال والخصومات وطلبات الإجازات' },
     { id: 'biometric', label: 'ماكينة البصمة (ZKTeco)', icon: Cpu, desc: 'ربط وسحب حركات البصمة عبر الشبكة' },
     { id: 'treasury', label: 'الخزينة والعهد', icon: Wallet, desc: 'الخزينة الرئيسية والفرعية وجرد فئات الدرج' },
     { id: 'expenses', label: 'مصروفات', icon: DollarSign, desc: 'مصروفات 10 و 20 وتنزيلها بالراتب' },

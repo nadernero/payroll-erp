@@ -909,21 +909,23 @@ export default function WarehousePortalPage() {
 
             {/* KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 sm:p-4">
                 <span className="text-xs font-bold text-slate-500 block">إجمالي العمال والسائقين</span>
-                <p className="text-2xl font-black font-mono text-slate-800 mt-1">{balances.length} <span className="text-xs font-normal">عامل</span></p>
+                <p className="text-xl sm:text-2xl font-black font-mono text-slate-800 mt-1 break-all">
+                  {balances.length} <span className="text-xs font-normal">عامل</span>
+                </p>
               </div>
 
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 sm:p-4">
                 <span className="text-xs font-bold text-emerald-700 block">إجمالي الأيام المتبقية لجميع العمال</span>
-                <p className="text-2xl font-black font-mono text-emerald-900 mt-1">
+                <p className="text-xl sm:text-2xl font-black font-mono text-emerald-900 mt-1 break-all">
                   {balances.reduce((acc, b) => acc + (b.annual_leaves?.remaining_days || 0), 0)} <span className="text-xs font-normal">يوم</span>
                 </p>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 sm:p-4">
                 <span className="text-xs font-bold text-amber-700 block">عمال استنفدوا رصيد إجازاتهم</span>
-                <p className="text-2xl font-black font-mono text-amber-900 mt-1">
+                <p className="text-xl sm:text-2xl font-black font-mono text-amber-900 mt-1 break-all">
                   {balances.filter(b => (b.annual_leaves?.remaining_days || 0) <= 0).length} <span className="text-xs font-normal">عامل</span>
                 </p>
               </div>

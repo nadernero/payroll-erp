@@ -335,45 +335,45 @@ export default function PayrollPage() {
 
       {/* KPI Cards */}
       {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <div className="bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
-            <span className="text-[11px] text-slate-500 block">إجمالي الاستحقاقات</span>
-            <p className="text-lg font-bold font-mono text-slate-800 mt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
+          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-100 shadow-xs min-w-0">
+            <span className="text-[11px] text-slate-500 block truncate">إجمالي الاستحقاقات</span>
+            <p className="text-base sm:text-lg font-bold font-mono text-slate-800 mt-1 truncate" title={`${summary.totalEntitlement.toLocaleString()} ج.م`}>
               {summary.totalEntitlement.toLocaleString()} <span className="text-[10px] font-sans text-slate-400">ج.م</span>
             </p>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
-            <span className="text-[11px] text-blue-600 block">إجمالي الإضافي</span>
-            <p className="text-lg font-bold font-mono text-blue-700 mt-1">
+          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-100 shadow-xs min-w-0">
+            <span className="text-[11px] text-blue-600 block truncate">إجمالي الإضافي</span>
+            <p className="text-base sm:text-lg font-bold font-mono text-blue-700 mt-1 truncate" title={`${summary.totalOvertime.toLocaleString()} ج.م`}>
               {summary.totalOvertime.toLocaleString()} <span className="text-[10px] font-sans text-blue-400">ج.م</span>
             </p>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
-            <span className="text-[11px] text-amber-600 block">مصروفات (10 و 20)</span>
-            <p className="text-lg font-bold font-mono text-amber-700 mt-1">
+          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-100 shadow-xs min-w-0">
+            <span className="text-[11px] text-amber-600 block truncate">مصروفات (10 و 20)</span>
+            <p className="text-base sm:text-lg font-bold font-mono text-amber-700 mt-1 truncate" title={`${summary.totalExpenses.toLocaleString()} ج.م`}>
               {summary.totalExpenses.toLocaleString()} <span className="text-[10px] font-sans text-amber-400">ج.م</span>
             </p>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
-            <span className="text-[11px] text-rose-600 block">إجمالي الاستقطاعات</span>
-            <p className="text-lg font-bold font-mono text-rose-700 mt-1">
+          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-100 shadow-xs min-w-0">
+            <span className="text-[11px] text-rose-600 block truncate">إجمالي الاستقطاعات</span>
+            <p className="text-base sm:text-lg font-bold font-mono text-rose-700 mt-1 truncate" title={`${summary.totalDeductions.toLocaleString()} ج.م`}>
               {summary.totalDeductions.toLocaleString()} <span className="text-[10px] font-sans text-rose-400">ج.م</span>
             </p>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
-            <span className="text-[11px] text-indigo-600 block">سلف مستحقة</span>
-            <p className="text-lg font-bold font-mono text-indigo-700 mt-1">
+          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-100 shadow-xs min-w-0">
+            <span className="text-[11px] text-indigo-600 block truncate">سلف مستحقة</span>
+            <p className="text-base sm:text-lg font-bold font-mono text-indigo-700 mt-1 truncate" title={`${summary.totalLoans.toLocaleString()} ج.م`}>
               {summary.totalLoans.toLocaleString()} <span className="text-[10px] font-sans text-indigo-400">ج.م</span>
             </p>
           </div>
 
-          <div className="bg-emerald-500/10 p-3.5 rounded-xl border border-emerald-300 shadow-xs">
-            <span className="text-[11px] text-emerald-900 font-bold block">صافي المرتبات المنصرفة</span>
-            <p className="text-xl font-black font-mono text-emerald-900 mt-1">
+          <div className="bg-emerald-500/10 p-3 sm:p-3.5 rounded-xl border border-emerald-300 shadow-xs min-w-0 col-span-2 sm:col-span-1">
+            <span className="text-[11px] text-emerald-900 font-bold block truncate">صافي المرتبات المنصرفة</span>
+            <p className="text-lg sm:text-xl font-black font-mono text-emerald-900 mt-1 truncate" title={`${summary.totalNet.toLocaleString()} ج.م`}>
               {summary.totalNet.toLocaleString()} <span className="text-[10px] font-sans text-emerald-600 font-normal">ج.م</span>
             </p>
           </div>

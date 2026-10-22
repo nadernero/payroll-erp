@@ -161,24 +161,24 @@ export default function LoansPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-          <span className="text-xs font-medium text-slate-500">إجمالي مبالغ السلف النشطة</span>
-          <p className="text-2xl font-bold font-mono text-slate-900 mt-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-100 shadow-sm min-w-0">
+          <span className="text-xs font-medium text-slate-500 block truncate">إجمالي مبالغ السلف النشطة</span>
+          <p className="text-xl sm:text-2xl font-bold font-mono text-slate-900 mt-1 sm:mt-2 truncate" title={`${totalLoanAmounts.toLocaleString()} ج.م`}>
             {totalLoanAmounts.toLocaleString()} <span className="text-xs font-sans text-slate-400">ج.م</span>
           </p>
         </div>
 
-        <div className="bg-rose-50/60 p-4 rounded-2xl border border-rose-200 shadow-sm">
-          <span className="text-xs font-bold text-rose-800">إجمالي المتبقي غير المسدد</span>
-          <p className="text-2xl font-bold font-mono text-rose-700 mt-2">
+        <div className="bg-rose-50/60 p-3.5 sm:p-4 rounded-2xl border border-rose-200 shadow-sm min-w-0">
+          <span className="text-xs font-bold text-rose-800 block truncate">إجمالي المتبقي غير المسدد</span>
+          <p className="text-xl sm:text-2xl font-bold font-mono text-rose-700 mt-1 sm:mt-2 truncate" title={`${totalRemainingAmounts.toLocaleString()} ج.م`}>
             {totalRemainingAmounts.toLocaleString()} <span className="text-xs font-sans text-rose-500 font-normal">ج.م</span>
           </p>
         </div>
 
-        <div className="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200 shadow-sm">
-          <span className="text-xs font-bold text-indigo-800">إجمالي الأقساط الشهرية المستحقة</span>
-          <p className="text-2xl font-bold font-mono text-indigo-700 mt-2">
+        <div className="bg-indigo-50/60 p-3.5 sm:p-4 rounded-2xl border border-indigo-200 shadow-sm min-w-0">
+          <span className="text-xs font-bold text-indigo-800 block truncate">إجمالي الأقساط الشهرية المستحقة</span>
+          <p className="text-xl sm:text-2xl font-bold font-mono text-indigo-700 mt-1 sm:mt-2 truncate" title={`${totalMonthlyInstallments.toLocaleString()} ج.م/شهر`}>
             {totalMonthlyInstallments.toLocaleString()} <span className="text-xs font-sans text-indigo-500 font-normal">ج.م/شهر</span>
           </p>
         </div>

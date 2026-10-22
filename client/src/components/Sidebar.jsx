@@ -80,24 +80,63 @@ export default function Sidebar({ activeTab, setActiveTab }) {
         </nav>
       </div>
 
-      {/* Switch to Employee Mobile Portal */}
+      {/* Switch to Portals */}
       <div className="p-3 border-t border-slate-800 space-y-2">
-        <button
-          onClick={() => setActiveTab('portal')}
-          className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-all border ${
-            activeTab === 'portal'
-              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-400/30'
-              : 'bg-slate-800/50 hover:bg-slate-800 text-slate-300 border-slate-700/50'
-          }`}
-        >
-          <div className="p-2 bg-blue-500/20 text-blue-400 rounded-xl">
-            <Sparkles className="w-5 h-5 text-amber-300" />
-          </div>
-          <div className="text-right">
-            <span className="font-bold text-xs block text-white">بوابة الموظف (الموبايل)</span>
-            <span className="text-[10px] text-slate-400">تقديم إجازات وإضافي واستعلام</span>
-          </div>
-        </button>
+        <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-2xl p-1 border border-slate-700/60">
+          <button
+            onClick={() => setActiveTab('portal')}
+            className={`flex-1 flex items-center gap-2 p-2 rounded-xl transition-all cursor-pointer ${
+              activeTab === 'portal'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+            <div className="text-right">
+              <span className="font-bold text-xs block">بوابة الموظف</span>
+              <span className="text-[9px] text-slate-400">إجازات وسلف</span>
+            </div>
+          </button>
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/portal`;
+              navigator.clipboard.writeText(url);
+              alert(`تم نسخ رابط بوابة الموظف:\n${url}`);
+            }}
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-xl transition-colors cursor-pointer"
+            title="نسخ رابط بوابة الموظف"
+          >
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-2xl p-1 border border-slate-700/60">
+          <button
+            onClick={() => setActiveTab('warehouse')}
+            className={`flex-1 flex items-center gap-2 p-2 rounded-xl transition-all cursor-pointer ${
+              activeTab === 'warehouse'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+            }`}
+          >
+            <Building2 className="w-4 h-4 text-amber-300 shrink-0" />
+            <div className="text-right">
+              <span className="font-bold text-xs block">بوابة المخازن</span>
+              <span className="text-[9px] text-slate-400">فروع وعمال</span>
+            </div>
+          </button>
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/warehouse-portal`;
+              navigator.clipboard.writeText(url);
+              alert(`تم نسخ رابط بوابة مدير المخازن:\n${url}`);
+            }}
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-xl transition-colors cursor-pointer"
+            title="نسخ رابط بوابة مدير المخازن"
+          >
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+        </div>
 
         {/* LAN Access Info */}
         {networkInfo && networkInfo.primaryLanUrl && (

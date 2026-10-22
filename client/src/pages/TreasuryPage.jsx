@@ -1759,19 +1759,19 @@ export default function TreasuryPage() {
       </div>
 
       {/* ══════════════════ HERO KPI CARDS (فصل الخزينة الرئيسية عن الخزائن الفرعية) ══════════════════ */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         {/* 1. Main Safe Book Balance */}
-        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-3xl p-5 text-white shadow-md relative overflow-hidden border border-slate-700/50">
+        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-3xl p-4 sm:p-5 text-white shadow-md relative overflow-hidden border border-slate-700/50">
           <div className="flex items-center justify-between mb-2">
             <div>
               <span className="text-xs font-bold text-slate-300 block">رصيد الخزينة الرئيسية (الدفتري)</span>
               <span className="text-[10px] text-slate-400">مسؤولية أمين الخزينة الرئيسي</span>
             </div>
-            <div className="p-2 bg-white/10 rounded-xl backdrop-blur-xs">
+            <div className="p-2 bg-white/10 rounded-xl backdrop-blur-xs shrink-0">
               <Building className="w-5 h-5 text-blue-400" />
             </div>
           </div>
-          <p className="text-2xl font-black tracking-tight font-mono">{fmt(mainBalance)} <span className="text-xs font-normal">ج.م</span></p>
+          <p className="text-xl sm:text-2xl font-black tracking-tight font-mono break-all">{fmt(mainBalance)} <span className="text-xs font-normal">ج.م</span></p>
           <div className="mt-2 text-[11px] text-slate-400 flex items-center justify-between">
             <span>الخزائن الرئيسية: ({mainSafes.length})</span>
             <span className="text-blue-300 font-bold">جاهز للصرف المركزي</span>
@@ -1779,11 +1779,11 @@ export default function TreasuryPage() {
         </div>
 
         {/* 2. Main Safe Physical Cash Drawer */}
-        <div className="bg-gradient-to-br from-emerald-700 via-teal-700 to-emerald-800 rounded-3xl p-5 text-white shadow-md relative overflow-hidden border border-emerald-500/30">
+        <div className="bg-gradient-to-br from-emerald-700 via-teal-700 to-emerald-800 rounded-3xl p-4 sm:p-5 text-white shadow-md relative overflow-hidden border border-emerald-500/30">
           <div className="flex items-center justify-between mb-2">
             <div>
               <span className="text-xs font-bold text-emerald-100 flex items-center gap-1">
-                <Coins className="w-4 h-4 text-amber-300" />
+                <Coins className="w-4 h-4 text-amber-300 shrink-0" />
                 درج الخزينة الرئيسية (الفعلي)
               </span>
               <span className="text-[10px] text-emerald-200/80">خاص بالخزينة الرئيسية فقط</span>
@@ -1799,55 +1799,55 @@ export default function TreasuryPage() {
                 });
                 setShowDenomModal(true);
               }}
-              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer shrink-0"
             >
               عدّ الدرج
             </button>
           </div>
-          <p className="text-2xl font-black tracking-tight font-mono text-amber-200">
+          <p className="text-xl sm:text-2xl font-black tracking-tight font-mono text-amber-200 break-all">
             {fmt(mainPhysicalDrawer)} <span className="text-xs font-normal text-white">ج.م</span>
           </p>
-          <p className="text-[11px] text-emerald-100 mt-2 flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
+          <p className="text-[10px] sm:text-[11px] text-emerald-100 mt-2 flex items-center gap-1 truncate">
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-300 shrink-0" />
             إجمالي فئات النقدية (200 إلى 5 جنيه) بالدرج
           </p>
         </div>
 
         {/* 3. Main Safe Drawer Matching & Variance */}
-        <div className={`col-span-1 md:col-span-1 rounded-3xl p-5 text-white shadow-md relative overflow-hidden border transition-all ${
+        <div className={`col-span-1 rounded-3xl p-4 sm:p-5 text-white shadow-md relative overflow-hidden border transition-all ${
           isExactDrawer
             ? 'bg-gradient-to-br from-emerald-600 to-green-700 border-emerald-400/40'
             : isDeficit
             ? 'bg-gradient-to-br from-rose-700 via-red-700 to-rose-800 border-rose-400 shadow-rose-900/30 ring-2 ring-rose-400/50'
             : 'bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-700 border-blue-400/40'
         }`}>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2">
             <span className="text-xs font-black tracking-wide flex items-center gap-1.5">
               {isExactDrawer ? (
                 <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-200 shrink-0" />
                   مطابقة درج الخزينة الرئيسية
                 </>
               ) : isDeficit ? (
                 <>
-                  <AlertTriangle className="w-4 h-4 text-amber-200 animate-bounce" />
-                  عجز في درج الخزينة الرئيسية!
+                  <AlertTriangle className="w-4 h-4 text-amber-200 animate-bounce shrink-0" />
+                  عجز في درج الخزينة!
                 </>
               ) : (
                 <>
-                  <AlertCircle className="w-4 h-4 text-cyan-200" />
-                  زيادة في درج الخزينة الرئيسية
+                  <AlertCircle className="w-4 h-4 text-cyan-200 shrink-0" />
+                  زيادة في درج الخزينة
                 </>
               )}
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => setShowCfoShareModal(true)}
                 className="px-2 py-1 bg-white/25 hover:bg-white/35 text-white font-bold rounded-xl text-[10px] backdrop-blur-xs transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
                 title="إرسال تقرير مطابقة الدرج عبر واتساب للمدير المالي"
               >
                 <MessageCircle className="w-3.5 h-3.5 text-emerald-300" />
-                إرسال للمدير المالي
+                <span className="hidden sm:inline">واتساب للمدير</span>
               </button>
               <button
                 onClick={() => {
@@ -1862,13 +1862,13 @@ export default function TreasuryPage() {
                 }}
                 className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white font-bold rounded-xl text-[10px] backdrop-blur-xs transition-colors cursor-pointer"
               >
-                تحديث الجرد
+                تحديث
               </button>
             </div>
           </div>
 
           <div className="space-y-1">
-            <p className="text-2xl font-black tracking-tight font-mono">
+            <p className="text-xl sm:text-2xl font-black tracking-tight font-mono break-all">
               {isExactDrawer ? (
                 <span className="text-white">مطابق 100%</span>
               ) : (
@@ -1877,7 +1877,7 @@ export default function TreasuryPage() {
                 </span>
               )}
             </p>
-            <p className="text-[11px] text-white/90 font-medium">
+            <p className="text-[10px] sm:text-[11px] text-white/90 font-medium leading-tight">
               {isExactDrawer
                 ? 'الفارق صفر • الفعلي بالدرج يطابق الدفتري تماماً'
                 : isDeficit
@@ -1888,25 +1888,25 @@ export default function TreasuryPage() {
         </div>
 
         {/* 4. Sub Safes Independent Custodies */}
-        <div className="bg-gradient-to-br from-amber-500 via-orange-600 to-amber-600 rounded-3xl p-5 text-white shadow-md relative overflow-hidden border border-amber-300/30">
+        <div className="bg-gradient-to-br from-amber-500 via-orange-600 to-amber-600 rounded-3xl p-4 sm:p-5 text-white shadow-md relative overflow-hidden border border-amber-300/30">
           <div className="flex items-center justify-between mb-2">
             <div>
               <span className="text-xs font-bold text-amber-100 block">الخزائن الفرعية والعهد المستقلة</span>
               <span className="text-[10px] text-amber-200">عهدة منفصلة بذمة مسؤولي الفروع</span>
             </div>
-            <div className="p-2 bg-white/10 rounded-xl backdrop-blur-xs">
+            <div className="p-2 bg-white/10 rounded-xl backdrop-blur-xs shrink-0">
               <DollarSign className="w-5 h-5 text-white" />
             </div>
           </div>
-          <p className="text-2xl font-black tracking-tight font-mono">{fmt(subBalance)} <span className="text-xs font-normal">ج.م</span></p>
+          <p className="text-xl sm:text-2xl font-black tracking-tight font-mono break-all">{fmt(subBalance)} <span className="text-xs font-normal">ج.م</span></p>
           <div className="mt-2 text-[11px] text-amber-100 flex items-center justify-between">
-            <span>إجمالي عدد ({subSafes.length}) خزائن فرعية</span>
+            <span>عدد ({subSafes.length}) خزائن فرعية</span>
             <button
               onClick={() => setShowSubSafesBrowserModal(true)}
-              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1"
+              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1 shrink-0"
             >
               <Eye className="w-3.5 h-3.5" />
-              استعراض الخزائن ({subSafes.length})
+              استعراض ({subSafes.length})
             </button>
           </div>
         </div>
@@ -2036,9 +2036,9 @@ export default function TreasuryPage() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                      <div className="text-left bg-emerald-50/70 border border-emerald-200/60 px-5 py-3 rounded-2xl">
+                      <div className="text-left bg-emerald-50/70 border border-emerald-200/60 px-4 sm:px-5 py-3 rounded-2xl">
                         <p className="text-[11px] font-bold text-emerald-700">الرصيد الدفتري الحالي</p>
-                        <p className="text-2xl font-black text-emerald-800 font-mono">
+                        <p className="text-xl sm:text-2xl font-black text-emerald-800 font-mono break-all">
                           {fmt(safe.current_balance)} <span className="text-xs font-semibold">ج.م</span>
                         </p>
                       </div>
@@ -4519,21 +4519,21 @@ export default function TreasuryPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="bg-gradient-to-br from-amber-600 to-orange-700 text-white p-4 rounded-2xl shadow-sm">
                 <span className="text-[11px] font-bold text-amber-100">رصيد العهدة الحالي المتاح</span>
-                <p className="text-2xl font-black font-mono mt-1">
+                <p className="text-xl sm:text-2xl font-black font-mono mt-1 break-all">
                   {fmt(selectedSubSafe.current_balance)} <span className="text-xs font-normal">ج.م</span>
                 </p>
               </div>
 
               <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-emerald-950">
                 <span className="text-[11px] font-bold text-emerald-700">إجمالي العهدة الواردة (تغذية)</span>
-                <p className="text-2xl font-black font-mono mt-1 text-emerald-800">
+                <p className="text-xl sm:text-2xl font-black font-mono mt-1 text-emerald-800 break-all">
                   {fmt(subSafeTransactions.filter(t => t.type === 'transfer_in' || t.type === 'custody_receive').reduce((s, t) => s + (t.amount || 0), 0))} <span className="text-xs font-normal">ج.م</span>
                 </p>
               </div>
 
               <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl text-rose-950">
                 <span className="text-[11px] font-bold text-rose-700">إجمالي المصروفات المنصرفة</span>
-                <p className="text-2xl font-black font-mono mt-1 text-rose-800">
+                <p className="text-xl sm:text-2xl font-black font-mono mt-1 text-rose-800 break-all">
                   {fmt(subSafeTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + (t.amount || 0), 0))} <span className="text-xs font-normal">ج.م</span>
                 </p>
               </div>
@@ -5549,10 +5549,10 @@ export default function TreasuryPage() {
             </div>
 
             {/* Summary KPI Banner */}
-            <div className="p-4 bg-gradient-to-r from-amber-500 to-orange-600 rounded-2xl text-white flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-amber-100">إجمالي أرصدة العهد بالخزائن الفرعية</span>
-                <p className="text-2xl font-black font-mono tracking-tight">{fmt(subBalance)} ج.م</p>
+            <div className="p-4 bg-gradient-to-r from-amber-500 to-orange-600 rounded-2xl text-white flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-amber-100 block">إجمالي أرصدة العهد بالخزائن الفرعية</span>
+                <p className="text-xl sm:text-2xl font-black font-mono tracking-tight break-all">{fmt(subBalance)} ج.م</p>
               </div>
               <button
                 onClick={() => {

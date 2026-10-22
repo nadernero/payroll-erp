@@ -581,8 +581,8 @@ export default function EmployeePortalPage() {
                 <Palmtree className="w-4 h-4" />
               </div>
             </div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black font-mono text-emerald-700">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-xl sm:text-2xl font-black font-mono text-emerald-700 break-all">
                 {portalData.leaves.remaining_balance}
               </span>
               <span className="text-xs font-semibold text-slate-400">يوم متبقي</span>
@@ -601,8 +601,8 @@ export default function EmployeePortalPage() {
                 <CreditCard className="w-4 h-4" />
               </div>
             </div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black font-mono text-indigo-700">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-xl sm:text-2xl font-black font-mono text-indigo-700 break-all">
                 {portalData.loans.total_remaining.toLocaleString()}
               </span>
               <span className="text-xs font-semibold text-slate-400">ج.م متبقي</span>
@@ -621,8 +621,8 @@ export default function EmployeePortalPage() {
                 <FileText className="w-4 h-4" />
               </div>
             </div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black font-mono text-slate-900">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-xl sm:text-2xl font-black font-mono text-slate-900 break-all">
                 {portalData.latest_payslip ? portalData.latest_payslip.net_salary.toLocaleString() : '0'}
               </span>
               <span className="text-xs font-semibold text-slate-400">ج.م</span>
