@@ -3,8 +3,6 @@ import { Printer, X, Building2, User, Calendar, CreditCard, ShieldCheck, Refresh
 import { fetchJson } from '../utils/api';
 
 export default function PayslipModal({ item, run, onClose, allowPrint = true }) {
-  if (!item) return null;
-
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -19,6 +17,8 @@ export default function PayslipModal({ item, run, onClose, allowPrint = true }) 
         .finally(() => setLoading(false));
     }
   }, [item, run]);
+
+  if (!item) return null;
 
   const handlePrint = () => {
     window.print();

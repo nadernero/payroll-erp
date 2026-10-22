@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Wallet, Plus, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight,
+  Wallet, Plus, ArrowDownCircle, ArrowUpCircle, ArrowLeftRight, ArrowRightLeft,
   RefreshCw, Building, ChevronDown, ChevronUp, Trash2, Edit2,
   Phone, MessageCircle, Calculator, TrendingUp, TrendingDown,
   BarChart2, X, Check, AlertCircle, Eye, DollarSign, Archive,
@@ -693,7 +693,7 @@ export default function TreasuryPage() {
       setSummary(smRes.data || []);
       setSummaryTotals(smRes.totals || null);
       setParties(pRes.data || []);
-      setTrusts(trRes.data || []);
+      setTrusts(Array.isArray(trRes?.data) ? trRes.data : (Array.isArray(trRes) ? trRes : []));
     } catch (err) {
       console.error('Failed to load treasury data:', err);
     } finally {
@@ -705,7 +705,7 @@ export default function TreasuryPage() {
     setTrustsLoading(true);
     try {
       const res = await fetchJson('/treasury/trusts');
-      setTrusts(res.data || []);
+      setTrusts(Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []));
     } catch (err) {
       console.error('Failed to load trusts:', err);
     } finally {
@@ -2198,7 +2198,7 @@ export default function TreasuryPage() {
       <div className="flex gap-1.5 bg-slate-100 p-1.5 rounded-2xl w-full md:w-auto overflow-x-auto">
         {[
           { id: 'safes', label: '🏦 كروت الخزائن والأرصدة' },
-          { id: 'trusts', label: `🤝 الأمانات والعهد ومواعيد الرد (${trusts.filter(t => t.remaining_amount > 0).length})` },
+          { id: 'trusts', label: `🤝 الأمانات والعهد ومواعيد الرد (${(Array.isArray(trusts) ? trusts : []).filter(t => (t.remaining_amount || 0) > 0).length})` },
           { id: 'transactions', label: '📋 دفتر حركات الخزينة' },
           { id: 'parties', label: '🏢 جهات وشركات التعامل (موردين / صيانة)' },
           { id: 'denominations', label: '🪙 درج الخزينة الرئيسية (الجرد)' },
