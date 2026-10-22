@@ -1,0 +1,18 @@
+{
+  "name": "بوابة الموظف الذكية | Employee Portal",
+  "short_name": "بوابة الموظف",
+  "description": "بوابة الخدمة الذاتية للموظف لمتابعة المرتبات والإجازات والسلف وتقديم الطلبات",
+  "start_url": "/portal",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#059669",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-employee.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

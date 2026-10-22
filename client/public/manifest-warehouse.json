@@ -1,0 +1,18 @@
+{
+  "name": "بوابة مدير المخازن والفروع | Warehouse Portal",
+  "short_name": "بوابة المخازن",
+  "description": "بوابة مدير المخازن لاعتماد ومتابعة طلبات العمال والسائقين والخصومات",
+  "start_url": "/warehouse-portal",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#d97706",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-warehouse.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
