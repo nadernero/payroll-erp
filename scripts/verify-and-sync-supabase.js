@@ -32,7 +32,9 @@ const tablesToCheck = [
   { name: 'payroll_items', desc: 'بنود مرتبات الموظفين' },
   { name: 'salary_history', desc: 'سجل تدرج الرواتب' },
   { name: 'cash_transactions', desc: 'حركات الخزينة' },
-  { name: 'cash_denominations', desc: 'فئات النقدية بالدرج' }
+  { name: 'cash_denominations', desc: 'فئات النقدية بالدرج' },
+  { name: 'cash_trusts', desc: 'الأمانات والعهد المؤقتة' },
+  { name: 'cash_trust_returns', desc: 'استرداد الأمانات والعهد' }
 ];
 
 async function main() {

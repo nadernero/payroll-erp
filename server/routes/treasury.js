@@ -70,7 +70,7 @@ router.get('/safes', (req, res) => {
 router.post('/safes', (req, res) => {
   try {
     const { name, type, parent_safe_id, custodian_name, custodian_phone,
-            custodian_employee_id, notes } = req.body;
+            custodian_employee_id, notes, is_trust, safe_category } = req.body;
     if (!name || !type) return res.status(400).json({ error: 'اسم الخزينة والنوع مطلوبان' });
 
     // Sub safe must have a parent
@@ -80,10 +80,11 @@ router.post('/safes', (req, res) => {
 
     const result = db.prepare(`
       INSERT INTO cash_safes (name, type, parent_safe_id, custodian_name, custodian_phone,
-                              custodian_employee_id, current_balance, notes)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                              custodian_employee_id, current_balance, notes, is_trust, safe_category)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
     `).run(name.trim(), type, parent_safe_id || null, custodian_name || null,
-           custodian_phone || null, custodian_employee_id || null, notes || null);
+           custodian_phone || null, custodian_employee_id || null, notes || null,
+           is_trust ? 1 : 0, safe_category || (is_trust ? 'trust' : 'standard'));
 
     const safe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(result.lastInsertRowid);
     pushToSupabase('cash_safes', safe);
@@ -94,7 +95,7 @@ router.post('/safes', (req, res) => {
 // PUT /api/treasury/safes/:id
 router.put('/safes/:id', (req, res) => {
   try {
-    const { name, custodian_name, custodian_phone, custodian_employee_id, notes, is_active } = req.body;
+    const { name, custodian_name, custodian_phone, custodian_employee_id, notes, is_active, is_trust, safe_category } = req.body;
     const existing = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(req.params.id);
     if (!existing) return res.status(404).json({ error: 'الخزينة غير موجودة' });
 
@@ -105,11 +106,16 @@ router.put('/safes/:id', (req, res) => {
         custodian_phone = COALESCE(?, custodian_phone),
         custodian_employee_id = COALESCE(?, custodian_employee_id),
         notes = COALESCE(?, notes),
-        is_active = COALESCE(?, is_active)
+        is_active = COALESCE(?, is_active),
+        is_trust = COALESCE(?, is_trust),
+        safe_category = COALESCE(?, safe_category)
       WHERE id = ?
     `).run(name || null, custodian_name || null, custodian_phone || null,
            custodian_employee_id || null, notes || null,
-           is_active !== undefined ? is_active : null, req.params.id);
+           is_active !== undefined ? is_active : null,
+           is_trust !== undefined ? (is_trust ? 1 : 0) : null,
+           safe_category || null,
+           req.params.id);
 
     const updated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(req.params.id);
     pushToSupabase('cash_safes', updated);
@@ -1472,6 +1478,334 @@ router.post('/supabase-sync-now', async (req, res) => {
     const result = await syncDatabase(db);
     res.json(result);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/treasury/sub-safes/replenish (Dedicated sub-safe feeding from main safe)
+router.post('/sub-safes/replenish', (req, res) => {
+  try {
+    const { main_safe_id, sub_safe_id, amount, date, notes } = req.body;
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) return res.status(400).json({ error: 'المبلغ غير صالح' });
+    if (!main_safe_id || !sub_safe_id) return res.status(400).json({ error: 'يجب تحديد الخزينة الرئيسية والفرعية' });
+
+    const mainSafe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(main_safe_id);
+    const subSafe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(sub_safe_id);
+    if (!mainSafe || !subSafe) return res.status(404).json({ error: 'إحدى الخزائن غير موجودة' });
+
+    if (amt > mainSafe.current_balance) {
+      return res.status(400).json({
+        error: `رصيد الخزينة الرئيسية (${mainSafe.current_balance.toLocaleString('ar-EG')} ج.م) لا يكفي لتغذية العهدة بهذا المبلغ`
+      });
+    }
+
+    const txDate = date || new Date().toISOString().split('T')[0];
+    const mainNewBal = mainSafe.current_balance - amt;
+    const subNewBal = subSafe.current_balance + amt;
+    let mainTxId = null;
+    let subTxId = null;
+
+    db.transaction(() => {
+      // 1. Out from main
+      const mRes = db.prepare(`
+        INSERT INTO cash_transactions
+          (safe_id, type, amount, balance_before, balance_after, description,
+           related_safe_id, transaction_date, notes)
+        VALUES (?, 'sub_replenish', ?, ?, ?, ?, ?, ?, ?)
+      `).run(main_safe_id, amt, mainSafe.current_balance, mainNewBal,
+             `تغذية عهدة الخزينة الفرعية (${subSafe.name})`, sub_safe_id, txDate, notes || null);
+      mainTxId = mRes.lastInsertRowid;
+      db.prepare('UPDATE cash_safes SET current_balance = ? WHERE id = ?').run(mainNewBal, main_safe_id);
+
+      // 2. In to sub
+      const sRes = db.prepare(`
+        INSERT INTO cash_transactions
+          (safe_id, type, amount, balance_before, balance_after, description,
+           related_safe_id, transaction_date, notes)
+        VALUES (?, 'transfer_in', ?, ?, ?, ?, ?, ?, ?)
+      `).run(sub_safe_id, amt, subSafe.current_balance, subNewBal,
+             `عهدة واردة من: ${mainSafe.name}`, main_safe_id, txDate, notes || null);
+      subTxId = sRes.lastInsertRowid;
+      db.prepare('UPDATE cash_safes SET current_balance = ? WHERE id = ?').run(subNewBal, sub_safe_id);
+    })();
+
+    const mainSafeAfter = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(main_safe_id);
+    const subSafeAfter = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(sub_safe_id);
+    const mainTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(mainTxId);
+    const subTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(subTxId);
+
+    pushToSupabase('cash_safes', mainSafeAfter);
+    pushToSupabase('cash_safes', subSafeAfter);
+    pushToSupabase('cash_transactions', mainTx);
+    pushToSupabase('cash_transactions', subTx);
+
+    res.json({
+      success: true,
+      message: `تمت تغذية عهدة خزينة (${subSafe.name}) بمبلغ ${amt.toLocaleString('ar-EG')} ج.م بنجاح`,
+      main_balance: mainNewBal,
+      sub_balance: subNewBal
+    });
+  } catch (err) {
+    console.error('Error replenishing sub safe:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── CASH TRUSTS & TEMPORARY CUSTODIES (الأمانات والعهد المؤقتة ومواعيد الرد) ───
+
+// GET /api/treasury/trusts
+router.get('/trusts', (req, res) => {
+  try {
+    const { status, safe_id, employee_id, search } = req.query;
+    let query = `
+      SELECT t.*, s.name as safe_name, e.code as employee_code
+      FROM cash_trusts t
+      LEFT JOIN cash_safes s ON s.id = t.safe_id
+      LEFT JOIN employees e ON e.id = t.employee_id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (safe_id) {
+      query += ` AND t.safe_id = ?`;
+      params.push(safe_id);
+    }
+    if (employee_id) {
+      query += ` AND t.employee_id = ?`;
+      params.push(employee_id);
+    }
+    if (search) {
+      query += ` AND (t.person_name LIKE ? OR t.person_phone LIKE ? OR t.purpose LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    query += ` ORDER BY t.created_at DESC`;
+    const trusts = db.prepare(query).all(...params);
+
+    const today = new Date().toISOString().split('T')[0];
+    const enriched = trusts.map(t => {
+      const isOverdue = t.remaining_amount > 0 && t.due_date && t.due_date < today;
+      const computedStatus = t.remaining_amount <= 0.01 ? 'returned' : (isOverdue ? 'overdue' : 'active');
+      return {
+        ...t,
+        is_overdue: isOverdue,
+        computed_status: computedStatus
+      };
+    });
+
+    let filtered = enriched;
+    if (status && status !== 'all') {
+      filtered = enriched.filter(t => t.computed_status === status);
+    }
+
+    res.json({ success: true, data: filtered });
+  } catch (err) {
+    console.error('Error fetching trusts:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/treasury/trusts (Disburse trust / custody to an employee or external person)
+router.post('/trusts', (req, res) => {
+  try {
+    const {
+      safe_id, person_type, employee_id, person_name, person_phone, person_national_id,
+      amount, given_date, due_date, purpose, notes
+    } = req.body;
+
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) return res.status(400).json({ error: 'مبلغ الأمانة غير صالح' });
+    if (!safe_id) return res.status(400).json({ error: 'يجب اختيار الخزينة المنصرف منها' });
+    if (!person_name || !person_name.trim()) return res.status(400).json({ error: 'يجب تحديد اسم المستلم' });
+    if (!due_date) return res.status(400).json({ error: 'يجب تحديد موعد الرد المتفق عليه' });
+
+    const safe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
+    if (!safe) return res.status(404).json({ error: 'الخزينة غير موجودة' });
+    if (amt > safe.current_balance) {
+      return res.status(400).json({
+        error: `رصيد الخزينة الحالي (${safe.current_balance.toLocaleString('ar-EG')} ج.م) لا يكفي لصرف هذا المبلغ`
+      });
+    }
+
+    const todayStr = given_date || new Date().toISOString().split('T')[0];
+    const newSafeBal = safe.current_balance - amt;
+
+    let trustId = null;
+    let txId = null;
+
+    db.transaction(() => {
+      // 1. Transaction to debit safe
+      const desc = `صرف أمانة / عهدة مؤقتة طرف: ${person_name.trim()} (موعد الرد: ${due_date})`;
+      const txStmt = db.prepare(`
+        INSERT INTO cash_transactions
+          (safe_id, type, amount, balance_before, balance_after, description,
+           related_employee_id, related_employee_name, sender_phone,
+           transaction_date, notes)
+        VALUES (?, 'expense', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const txRes = txStmt.run(
+        safe_id, amt, safe.current_balance, newSafeBal, desc,
+        employee_id || null, person_name.trim(), person_phone || null,
+        todayStr, notes || purpose || null
+      );
+      txId = txRes.lastInsertRowid;
+
+      // 2. Update safe balance
+      db.prepare('UPDATE cash_safes SET current_balance = ? WHERE id = ?').run(newSafeBal, safe_id);
+
+      // 3. Insert trust record
+      const trustStmt = db.prepare(`
+        INSERT INTO cash_trusts
+          (safe_id, person_type, employee_id, person_name, person_phone, person_national_id,
+           amount, returned_amount, remaining_amount, given_date, due_date, status,
+           purpose, notes, disburse_tx_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'active', ?, ?, ?)
+      `);
+      const trustRes = trustStmt.run(
+        safe_id, person_type || 'employee', employee_id || null, person_name.trim(),
+        person_phone || null, person_national_id || null,
+        amt, amt, todayStr, due_date, purpose || null, notes || null, txId
+      );
+      trustId = trustRes.lastInsertRowid;
+    })();
+
+    const updatedSafe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
+    const newTrust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
+    const newTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(txId);
+
+    pushToSupabase('cash_safes', updatedSafe);
+    pushToSupabase('cash_trusts', newTrust);
+    pushToSupabase('cash_transactions', newTx);
+
+    res.status(201).json({
+      success: true,
+      message: `تم صرف الأمانة بمبلغ ${amt.toLocaleString('ar-EG')} ج.م وتحديد موعد الرد بتاريخ ${due_date}`,
+      data: newTrust,
+      safe_balance: newSafeBal
+    });
+  } catch (err) {
+    console.error('Error creating trust:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/treasury/trusts/:id/return (Return trust amount & clear from person)
+router.post('/trusts/:id/return', (req, res) => {
+  try {
+    const trustId = req.params.id;
+    const { return_safe_id, amount, return_date, notes } = req.body;
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) return res.status(400).json({ error: 'مبلغ الرد غير صالح' });
+
+    const trust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
+    if (!trust) return res.status(404).json({ error: 'سجل الأمانة غير موجود' });
+    if (amt > trust.remaining_amount + 0.01) {
+      return res.status(400).json({
+        error: `المبلغ المطلوب رده (${amt}) أكبر من المبلغ المتبقي طرف الشخص (${trust.remaining_amount})`
+      });
+    }
+
+    const safeId = return_safe_id || trust.safe_id;
+    const safe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safeId);
+    if (!safe) return res.status(404).json({ error: 'الخزينة المودع بها غير موجودة' });
+
+    const retDate = return_date || new Date().toISOString().split('T')[0];
+    const newSafeBal = safe.current_balance + amt;
+    const newReturned = trust.returned_amount + amt;
+    const newRemaining = Math.max(0, trust.amount - newReturned);
+    const newStatus = newRemaining <= 0.01 ? 'returned' : 'active';
+    let returnTxId = null;
+
+    db.transaction(() => {
+      // 1. Transaction to credit safe
+      const desc = `رد واسترداد أمانة / عهدة من طرف: ${trust.person_name} (المتبقي: ${newRemaining > 0 ? newRemaining.toLocaleString() + ' ج.م' : 'تم الرد بالكامل وتصفية العهدة'})`;
+      const txStmt = db.prepare(`
+        INSERT INTO cash_transactions
+          (safe_id, type, amount, balance_before, balance_after, description,
+           related_employee_id, related_employee_name, sender_phone,
+           transaction_date, notes)
+        VALUES (?, 'income', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const txRes = txStmt.run(
+        safeId, amt, safe.current_balance, newSafeBal, desc,
+        trust.employee_id || null, trust.person_name, trust.person_phone || null,
+        retDate, notes || null
+      );
+      returnTxId = txRes.lastInsertRowid;
+
+      // 2. Update safe balance
+      db.prepare('UPDATE cash_safes SET current_balance = ? WHERE id = ?').run(newSafeBal, safeId);
+
+      // 3. Insert return history
+      db.prepare(`
+        INSERT INTO cash_trust_returns (trust_id, safe_id, amount, return_date, notes, tx_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(trustId, safeId, amt, retDate, notes || null, returnTxId);
+
+      // 4. Update trust record (clears / reduces the remaining amount)
+      db.prepare(`
+        UPDATE cash_trusts
+        SET returned_amount = ?, remaining_amount = ?, status = ?,
+            return_date = CASE WHEN ? = 'returned' THEN ? ELSE return_date END,
+            return_tx_id = ?
+        WHERE id = ?
+      `).run(newReturned, newRemaining, newStatus, newStatus, retDate, returnTxId, trustId);
+    })();
+
+    const updatedSafe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safeId);
+    const updatedTrust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
+    const returnTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(returnTxId);
+
+    pushToSupabase('cash_safes', updatedSafe);
+    pushToSupabase('cash_trusts', updatedTrust);
+    pushToSupabase('cash_transactions', returnTx);
+
+    res.json({
+      success: true,
+      message: newStatus === 'returned'
+        ? `تم رد الأمانة بالكامل وتصفية المبلغ وحذفه من على ${trust.person_name} بنجاح`
+        : `تم رد جزء من الأمانة بمبلغ ${amt.toLocaleString()} ج.م، والمتبقي طرفه ${newRemaining.toLocaleString()} ج.م`,
+      data: updatedTrust,
+      safe_balance: newSafeBal
+    });
+  } catch (err) {
+    console.error('Error returning trust:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/treasury/trusts/:id (Cancel / Delete trust)
+router.delete('/trusts/:id', (req, res) => {
+  try {
+    const trustId = req.params.id;
+    const trust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
+    if (!trust) return res.status(404).json({ error: 'سجل الأمانة غير موجود' });
+
+    // Revert safe balance if no return occurred yet
+    if (trust.returned_amount === 0) {
+      const safe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(trust.safe_id);
+      if (safe) {
+        db.prepare('UPDATE cash_safes SET current_balance = current_balance + ? WHERE id = ?')
+          .run(trust.amount, trust.safe_id);
+        const safeAfter = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(trust.safe_id);
+        pushToSupabase('cash_safes', safeAfter);
+      }
+    }
+
+    const disburseTxId = trust.disburse_tx_id;
+    db.prepare('DELETE FROM cash_trust_returns WHERE trust_id = ?').run(trustId);
+    db.prepare('DELETE FROM cash_trusts WHERE id = ?').run(trustId);
+    deleteFromSupabase('cash_trusts', trustId);
+
+    if (trust.returned_amount === 0 && disburseTxId) {
+      try {
+        db.prepare('DELETE FROM cash_transactions WHERE id = ?').run(disburseTxId);
+        deleteFromSupabase('cash_transactions', disburseTxId);
+      } catch (e) {}
+    }
+
+    res.json({ success: true, message: 'تم حذف وإلغاء سجل الأمانة بنجاح' });
+  } catch (err) {
+    console.error('Error deleting trust:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -422,6 +422,48 @@ export function initDatabase() {
     db.exec(`ALTER TABLE employees ADD COLUMN exclude_from_payroll INTEGER DEFAULT 0;`);
   } catch (e) {}
 
+  // Migrations for cash_safes trust flag and category
+  try { db.exec(`ALTER TABLE cash_safes ADD COLUMN is_trust INTEGER DEFAULT 0;`); } catch (e) {}
+  try { db.exec(`ALTER TABLE cash_safes ADD COLUMN safe_category TEXT DEFAULT 'standard';`); } catch (e) {}
+  try { db.exec(`ALTER TABLE cash_transactions ADD COLUMN trust_id INTEGER;`); } catch (e) {}
+
+  // Tables for cash_trusts (الأمانات والعهد المؤقتة للأشخاص والموظفين مع تحديد موعد الرد)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cash_trusts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      safe_id INTEGER NOT NULL REFERENCES cash_safes(id),
+      person_type TEXT NOT NULL DEFAULT 'employee',
+      employee_id INTEGER REFERENCES employees(id),
+      person_name TEXT NOT NULL,
+      person_phone TEXT,
+      person_national_id TEXT,
+      amount REAL NOT NULL,
+      returned_amount REAL NOT NULL DEFAULT 0,
+      remaining_amount REAL NOT NULL,
+      given_date TEXT NOT NULL,
+      due_date TEXT NOT NULL,
+      return_date TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      purpose TEXT,
+      notes TEXT,
+      disburse_tx_id INTEGER REFERENCES cash_transactions(id),
+      return_tx_id INTEGER REFERENCES cash_transactions(id),
+      created_by TEXT DEFAULT 'admin',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS cash_trust_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trust_id INTEGER NOT NULL REFERENCES cash_trusts(id) ON DELETE CASCADE,
+      safe_id INTEGER NOT NULL REFERENCES cash_safes(id),
+      amount REAL NOT NULL,
+      return_date TEXT NOT NULL,
+      notes TEXT,
+      tx_id INTEGER REFERENCES cash_transactions(id),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   // Treasury module seed - create default main safe if not exists
   try {
     const safeCount = db.prepare('SELECT COUNT(*) as c FROM cash_safes').get().c;

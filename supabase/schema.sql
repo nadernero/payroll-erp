@@ -352,6 +352,42 @@ CREATE TABLE IF NOT EXISTS official_holidays (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 17. Cash Trusts (الأمانات والعهد المؤقتة للموظفين والأشخاص ومواعيد الرد)
+CREATE TABLE IF NOT EXISTS cash_trusts (
+    id SERIAL PRIMARY KEY,
+    safe_id INTEGER NOT NULL REFERENCES cash_safes(id),
+    person_type TEXT NOT NULL DEFAULT 'employee',
+    employee_id INTEGER REFERENCES employees(id),
+    person_name TEXT NOT NULL,
+    person_phone TEXT,
+    person_national_id TEXT,
+    amount NUMERIC(14, 2) NOT NULL,
+    returned_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    remaining_amount NUMERIC(14, 2) NOT NULL,
+    given_date TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    return_date TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    purpose TEXT,
+    notes TEXT,
+    disburse_tx_id INTEGER REFERENCES cash_transactions(id),
+    return_tx_id INTEGER REFERENCES cash_transactions(id),
+    created_by TEXT DEFAULT 'admin',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 18. Cash Trust Returns (سجلات رد واسترداد الأمانات)
+CREATE TABLE IF NOT EXISTS cash_trust_returns (
+    id SERIAL PRIMARY KEY,
+    trust_id INTEGER NOT NULL REFERENCES cash_trusts(id) ON DELETE CASCADE,
+    safe_id INTEGER NOT NULL REFERENCES cash_safes(id),
+    amount NUMERIC(14, 2) NOT NULL,
+    return_date TEXT NOT NULL,
+    notes TEXT,
+    tx_id INTEGER REFERENCES cash_transactions(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ==============================================================================
 -- Indexes for High Performance
 -- ==============================================================================

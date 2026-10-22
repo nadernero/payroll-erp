@@ -371,6 +371,47 @@ export default function TreasuryPage() {
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [editSafe, setEditSafe] = useState(null);
 
+  // Sub-safe Replenishment State
+  const [showSubReplenishModal, setShowSubReplenishModal] = useState(false);
+  const [subReplenishForm, setSubReplenishForm] = useState({
+    main_safe_id: '',
+    sub_safe_id: '',
+    amount: '',
+    date: today(),
+    notes: '',
+    custodian_name: ''
+  });
+
+  // Trusts / Temporary Custodies State (الأمانات والعهد ومواعيد الرد)
+  const [trusts, setTrusts] = useState([]);
+  const [trustsLoading, setTrustsLoading] = useState(false);
+  const [trustFilter, setTrustFilter] = useState('all'); // 'all', 'active', 'overdue', 'returned'
+  const [trustSearch, setTrustSearch] = useState('');
+  const [showNewTrustModal, setShowNewTrustModal] = useState(false);
+  const [showReturnTrustModal, setShowReturnTrustModal] = useState(false);
+  const [selectedTrustForReturn, setSelectedTrustForReturn] = useState(null);
+
+  const [newTrustForm, setNewTrustForm] = useState({
+    safe_id: '',
+    person_type: 'employee',
+    employee_id: '',
+    person_name: '',
+    person_phone: '',
+    person_national_id: '',
+    amount: '',
+    given_date: today(),
+    due_date: '',
+    purpose: '',
+    notes: ''
+  });
+
+  const [returnTrustForm, setReturnTrustForm] = useState({
+    return_safe_id: '',
+    amount: '',
+    return_date: today(),
+    notes: ''
+  });
+
   // General Forms
   const [safeForm, setSafeForm] = useState({
     name: '',
@@ -379,7 +420,8 @@ export default function TreasuryPage() {
     custodian_name: '',
     custodian_phone: '',
     custodian_employee_id: '',
-    notes: ''
+    notes: '',
+    is_trust: 0
   });
 
   const [txForm, setTxForm] = useState({
@@ -639,21 +681,35 @@ export default function TreasuryPage() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [sRes, eRes, smRes, pRes] = await Promise.all([
+      const [sRes, eRes, smRes, pRes, trRes] = await Promise.all([
         fetchJson('/treasury/safes'),
         fetchJson('/employees?status=active&limit=300').catch(() => []),
         fetchJson('/treasury/summary').catch(() => ({ data: [], totals: null })),
-        fetchJson('/treasury/parties').catch(() => ({ data: [] }))
+        fetchJson('/treasury/parties').catch(() => ({ data: [] })),
+        fetchJson('/treasury/trusts').catch(() => ({ data: [] }))
       ]);
       setSafes(sRes.data || []);
       setEmployees(Array.isArray(eRes) ? eRes : (eRes.data || []));
       setSummary(smRes.data || []);
       setSummaryTotals(smRes.totals || null);
       setParties(pRes.data || []);
+      setTrusts(trRes.data || []);
     } catch (err) {
       console.error('Failed to load treasury data:', err);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadTrusts = useCallback(async () => {
+    setTrustsLoading(true);
+    try {
+      const res = await fetchJson('/treasury/trusts');
+      setTrusts(res.data || []);
+    } catch (err) {
+      console.error('Failed to load trusts:', err);
+    } finally {
+      setTrustsLoading(false);
     }
   }, []);
 
@@ -1479,12 +1535,159 @@ export default function TreasuryPage() {
       }
       setShowNewSafeModal(false);
       setEditSafe(null);
-      setSafeForm({ name: '', type: 'main', parent_safe_id: '', custodian_name: '', custodian_phone: '', custodian_employee_id: '', notes: '' });
+      setSafeForm({ name: '', type: 'main', parent_safe_id: '', custodian_name: '', custodian_phone: '', custodian_employee_id: '', notes: '', is_trust: 0 });
       await loadAll();
     } catch (err) {
       alert('خطأ أثناء حفظ الخزينة: ' + err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Open Sub-Safe Replenish Modal
+  const openSubReplenishModal = (fromSafe = null, toSubSafe = null) => {
+    const main = fromSafe?.type === 'main' ? fromSafe : (mainSafes[0] || safes.find(s => s.type === 'main') || null);
+    const sub = toSubSafe || subSafes[0] || null;
+    setSubReplenishForm({
+      main_safe_id: main ? String(main.id) : '',
+      sub_safe_id: sub ? String(sub.id) : '',
+      amount: '',
+      date: today(),
+      notes: sub ? `تغذية عهدة نقدية لخزينة ${sub.name}` : 'تغذية عهدة نقدية لخزينة فرعية',
+      custodian_name: sub?.custodian_name || ''
+    });
+    setShowSubReplenishModal(true);
+  };
+
+  const handleSubReplenishSubmit = async (e) => {
+    e.preventDefault();
+    if (!subReplenishForm.main_safe_id || !subReplenishForm.sub_safe_id) {
+      alert('يجب تحديد الخزينة الرئيسية والخزينة الفرعية');
+      return;
+    }
+    const amt = parseFloat(subReplenishForm.amount);
+    if (!amt || amt <= 0) {
+      alert('يرجى إدخال مبلغ صحيح أكبر من الصفر');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetchJson('/treasury/sub-safes/replenish', {
+        method: 'POST',
+        body: JSON.stringify(subReplenishForm)
+      });
+      alert(res.message || 'تمت تغذية الخزينة الفرعية بنجاح ✓');
+      setShowSubReplenishModal(false);
+      await loadAll();
+    } catch (err) {
+      alert('خطأ أثناء تغذية الخزينة: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Open New Trust Modal
+  const openNewTrustModal = (safe = null) => {
+    const sId = safe?.id ? String(safe.id) : (mainSafes[0]?.id ? String(mainSafes[0].id) : (safes[0]?.id ? String(safes[0].id) : ''));
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    const defaultDue = d.toISOString().split('T')[0];
+
+    setNewTrustForm({
+      safe_id: sId,
+      person_type: 'employee',
+      employee_id: employees[0]?.id ? String(employees[0].id) : '',
+      person_name: employees[0]?.name || '',
+      person_phone: employees[0]?.phone || '',
+      person_national_id: '',
+      amount: '',
+      given_date: today(),
+      due_date: defaultDue,
+      purpose: 'أمانة نقدية / عهدة مؤقتة',
+      notes: ''
+    });
+    setShowNewTrustModal(true);
+  };
+
+  const handleCreateTrustSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(newTrustForm.amount);
+    if (!amt || amt <= 0) {
+      alert('يرجى إدخال مبلغ صالح للأمانة');
+      return;
+    }
+    if (!newTrustForm.person_name || !newTrustForm.person_name.trim()) {
+      alert('يرجى تحديد اسم المستلم للأمانة');
+      return;
+    }
+    if (!newTrustForm.due_date) {
+      alert('يرجى تحديد موعد الرد المتفق عليه');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetchJson('/treasury/trusts', {
+        method: 'POST',
+        body: JSON.stringify(newTrustForm)
+      });
+      alert(res.message || 'تم صرف الأمانة بنجاح ✓');
+      setShowNewTrustModal(false);
+      await loadAll();
+      await loadTrusts();
+    } catch (err) {
+      alert('خطأ أثناء صرف الأمانة: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openReturnTrustModal = (trust) => {
+    setSelectedTrustForReturn(trust);
+    setReturnTrustForm({
+      return_safe_id: String(trust.safe_id),
+      amount: String(trust.remaining_amount),
+      return_date: today(),
+      notes: `رد واسترداد أمانة من طرف: ${trust.person_name}`
+    });
+    setShowReturnTrustModal(true);
+  };
+
+  const handleReturnTrustSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedTrustForReturn) return;
+    const amt = parseFloat(returnTrustForm.amount);
+    if (!amt || amt <= 0) {
+      alert('يرجى إدخال مبلغ رد صالح');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetchJson(`/treasury/trusts/${selectedTrustForReturn.id}/return`, {
+        method: 'POST',
+        body: JSON.stringify(returnTrustForm)
+      });
+      alert(res.message || 'تم إثبات رد الأمانة بنجاح وتصفية المبلغ ✓');
+      setShowReturnTrustModal(false);
+      setSelectedTrustForReturn(null);
+      await loadAll();
+      await loadTrusts();
+    } catch (err) {
+      alert('خطأ أثناء رد الأمانة: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteTrust = async (id, name) => {
+    if (!window.confirm(`هل أنت متأكد من حذف أو إلغاء سجل أمانة (${name})؟`)) return;
+    try {
+      await fetchJson(`/treasury/trusts/${id}`, { method: 'DELETE' });
+      alert('تم حذف سجل الأمانة بنجاح');
+      await loadAll();
+      await loadTrusts();
+    } catch (err) {
+      alert('خطأ: ' + err.message);
     }
   };
 
@@ -1681,6 +1884,26 @@ export default function TreasuryPage() {
           >
             <ArrowDownCircle className="w-4 h-4" />
             + استلام عهدة من الشركة
+          </button>
+
+          {/* Sub Safe Feeding Button (Top Bar) */}
+          <button
+            onClick={() => openSubReplenishModal()}
+            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-bold rounded-2xl text-xs shadow-sm hover:shadow transition-all cursor-pointer"
+            title="تغذية خزينة فرعية وتحويل عهدة نقدية من الخزينة الرئيسية"
+          >
+            <ArrowRightLeft className="w-4 h-4 text-amber-200" />
+            🔄 تغذية خزينة فرعية
+          </button>
+
+          {/* New Trust / Custody Button (Top Bar) */}
+          <button
+            onClick={() => openNewTrustModal()}
+            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-700 hover:to-cyan-800 text-white font-bold rounded-2xl text-xs shadow-sm hover:shadow transition-all cursor-pointer"
+            title="صرف أمانة أو عهدة مؤقتة لشخص أو موظف مع تحديد موعد الرد"
+          >
+            <Coins className="w-4 h-4 text-teal-200" />
+            🤝 صرف أمانة / عهدة
           </button>
 
           {/* Dedicated Employee Disbursement Window */}
@@ -1975,6 +2198,7 @@ export default function TreasuryPage() {
       <div className="flex gap-1.5 bg-slate-100 p-1.5 rounded-2xl w-full md:w-auto overflow-x-auto">
         {[
           { id: 'safes', label: '🏦 كروت الخزائن والأرصدة' },
+          { id: 'trusts', label: `🤝 الأمانات والعهد ومواعيد الرد (${trusts.filter(t => t.remaining_amount > 0).length})` },
           { id: 'transactions', label: '📋 دفتر حركات الخزينة' },
           { id: 'parties', label: '🏢 جهات وشركات التعامل (موردين / صيانة)' },
           { id: 'denominations', label: '🪙 درج الخزينة الرئيسية (الجرد)' },
@@ -2005,191 +2229,222 @@ export default function TreasuryPage() {
             <>
               {mainSafes.map(safe => (
                 <div key={safe.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-                  <div className="p-6 flex flex-wrap items-center justify-between gap-4 bg-gradient-to-l from-slate-50/50 to-white">
-                    <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-md shadow-blue-200">
-                        <Building className="w-7 h-7" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-black text-slate-800 text-lg">{safe.name}</h3>
-                          <span className="px-2.5 py-0.5 bg-blue-100 text-blue-800 rounded-full text-[11px] font-black border border-blue-200">
-                            خزينة رئيسية
-                          </span>
+                  <div className="p-4 sm:p-6 space-y-4 bg-gradient-to-l from-slate-50/50 to-white">
+                    {/* Row 1: Safe Info & Balance Card (Clean, Responsive, Never Squished!) */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-md shadow-blue-200 shrink-0">
+                          <Building className="w-6 h-6 sm:w-7 sm:h-7" />
                         </div>
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
-                          {safe.custodian_name && (
-                            <span className="flex items-center gap-1 font-semibold text-slate-700">
-                              <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-                              أمين الخزينة: {safe.custodian_name}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-black text-slate-800 text-base sm:text-lg">{safe.name}</h3>
+                            <span className="px-2.5 py-0.5 bg-blue-100 text-blue-800 rounded-full text-[10px] sm:text-[11px] font-black border border-blue-200">
+                              خزينة رئيسية
                             </span>
-                          )}
-                          {safe.custodian_phone && (
-                            <span className="flex items-center gap-1 text-emerald-600 font-mono font-bold" dir="ltr">
-                              <Phone className="w-3.5 h-3.5" />
-                              {safe.custodian_phone}
-                            </span>
-                          )}
-                          {safe.notes && <span className="text-slate-400">({safe.notes})</span>}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-500 mt-1">
+                            {safe.custodian_name && (
+                              <span className="flex items-center gap-1 font-semibold text-slate-700">
+                                <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                                أمين الخزينة: {safe.custodian_name}
+                              </span>
+                            )}
+                            {safe.custodian_phone && (
+                              <span className="flex items-center gap-1 text-emerald-600 font-mono font-bold" dir="ltr">
+                                <Phone className="w-3.5 h-3.5" />
+                                {safe.custodian_phone}
+                              </span>
+                            )}
+                            {safe.notes && <span className="text-slate-400">({safe.notes})</span>}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-4">
-                      <div className="text-left bg-emerald-50/70 border border-emerald-200/60 px-4 sm:px-5 py-3 rounded-2xl">
+                      {/* Balance Pill - Always wide and prominent, no vertical text breaking! */}
+                      <div className="bg-emerald-50/80 border border-emerald-200/80 px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl flex items-center justify-between sm:block sm:text-left shrink-0">
                         <p className="text-[11px] font-bold text-emerald-700">الرصيد الدفتري الحالي</p>
-                        <p className="text-xl sm:text-2xl font-black text-emerald-800 font-mono break-all">
+                        <p className="text-xl sm:text-2xl font-black text-emerald-800 font-mono break-all mt-0.5 sm:mt-1">
                           {fmt(safe.current_balance)} <span className="text-xs font-semibold">ج.م</span>
                         </p>
                       </div>
+                    </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        {/* 1. Custody Receive Button */}
-                        <button
-                          onClick={() => openCustodyReceiveModal(safe)}
-                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
-                          title="استلام عهدة نقدية بالخزينة وإثبات الفئات بالدرج"
-                        >
-                          <ArrowDownCircle className="w-3.5 h-3.5" />
-                          + استلام عهدة
-                        </button>
+                    {/* Row 2: Action Buttons Bar - wraps cleanly and never overflows! */}
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                      {/* 1. Custody Receive Button */}
+                      <button
+                        onClick={() => openCustodyReceiveModal(safe)}
+                        className="flex-1 min-w-[115px] sm:flex-none px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                        title="استلام عهدة نقدية بالخزينة وإثبات الفئات بالدرج"
+                      >
+                        <ArrowDownCircle className="w-3.5 h-3.5" />
+                        + استلام عهدة
+                      </button>
 
-                        {/* 2. Employee Disbursement (Day 10/20 & Loans) */}
-                        <button
-                          onClick={() => openEmployeeDisburseModal(safe)}
-                          className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-700 hover:from-purple-700 hover:to-indigo-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
-                          title="نافذة موحدة لصرف مصروف يوم 10 أو 20 أو سلف الموظفين"
-                        >
-                          <Users className="w-3.5 h-3.5" />
-                          💵 صرف موظفين (مصروف 10 و 20 / سلف)
-                        </button>
+                      {/* 2. Sub-Safe Replenish Button (Feed Sub Safe!) */}
+                      <button
+                        onClick={() => openSubReplenishModal(safe)}
+                        className="flex-1 min-w-[135px] sm:flex-none px-3.5 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                        title="تغذية خزينة فرعية وتحويل عهدة نقدية من الخزينة الرئيسية"
+                      >
+                        <ArrowRightLeft className="w-3.5 h-3.5 text-amber-200" />
+                        🔄 تغذية خزينة فرعية
+                      </button>
 
-                        {/* 3. Non-Employee Disbursement (Vendor / Supplier / Tech) */}
-                        <button
-                          onClick={() => openPartyDisburseModal(safe)}
-                          className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
-                          title="صرف لجهة أو شركة أو مورد أو فني مع رقم الفاتورة والإنقاص من الدرج"
-                        >
-                          <Building className="w-3.5 h-3.5" />
-                          🏢 صرف لجهات وشركات
-                        </button>
+                      {/* 3. Disburse Trust / Custody */}
+                      <button
+                        onClick={() => openNewTrustModal(safe)}
+                        className="flex-1 min-w-[135px] sm:flex-none px-3.5 py-2.5 bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-700 hover:to-cyan-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                        title="صرف أمانة أو عهدة مؤقتة لشخص أو موظف مع تحديد موعد الرد"
+                      >
+                        <Coins className="w-3.5 h-3.5 text-teal-200" />
+                        🤝 صرف أمانة / عهدة
+                      </button>
 
-                        {/* Edit Safe */}
-                        <button
-                          onClick={() => {
-                            setEditSafe(safe);
-                            setSafeForm({
-                              name: safe.name,
-                              type: safe.type,
-                              parent_safe_id: '',
-                              custodian_name: safe.custodian_name || '',
-                              custodian_phone: safe.custodian_phone || '',
-                              custodian_employee_id: safe.custodian_employee_id || '',
-                              notes: safe.notes || ''
-                            });
-                            setShowNewSafeModal(true);
-                          }}
-                          className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
-                          title="تعديل الخزينة"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      {/* 4. Employee Disbursement */}
+                      <button
+                        onClick={() => openEmployeeDisburseModal(safe)}
+                        className="flex-1 min-w-[130px] sm:flex-none px-3.5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-700 hover:from-purple-700 hover:to-indigo-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                        title="نافذة موحدة لصرف مصروف يوم 10 أو 20 أو سلف الموظفين"
+                      >
+                        <Users className="w-3.5 h-3.5 text-purple-200" />
+                        💵 صرف موظفين
+                      </button>
+
+                      {/* 5. Non-Employee Disbursement */}
+                      <button
+                        onClick={() => openPartyDisburseModal(safe)}
+                        className="flex-1 min-w-[125px] sm:flex-none px-3.5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all"
+                        title="صرف لجهة أو شركة أو مورد أو فني مع رقم الفاتورة والإنقاص من الدرج"
+                      >
+                        <Building className="w-3.5 h-3.5 text-blue-200" />
+                        🏢 صرف لجهات
+                      </button>
+
+                      {/* Edit Safe */}
+                      <button
+                        onClick={() => {
+                          setEditSafe(safe);
+                          setSafeForm({
+                            name: safe.name,
+                            type: safe.type,
+                            parent_safe_id: '',
+                            custodian_name: safe.custodian_name || '',
+                            custodian_phone: safe.custodian_phone || '',
+                            custodian_employee_id: safe.custodian_employee_id || '',
+                            notes: safe.notes || '',
+                            is_trust: safe.is_trust || 0
+                          });
+                          setShowNewSafeModal(true);
+                        }}
+                        className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer mr-auto sm:mr-0 shrink-0"
+                        title="تعديل بيانات الخزينة"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
                   {/* Sub Safes Under This Main Safe */}
                   <div className="border-t border-slate-100 bg-slate-50/60 p-4 space-y-3">
-                    <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
-                      <Wallet className="w-3.5 h-3.5 text-amber-600" />
-                      الخزائن الفرعية التابعة لهذه الخزينة:
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
+                        <Wallet className="w-3.5 h-3.5 text-amber-600" />
+                        الخزائن الفرعية التابعة لهذه الخزينة:
+                      </p>
+                      <button
+                        onClick={() => openSubReplenishModal(safe)}
+                        className="text-xs font-bold text-amber-700 hover:text-amber-900 flex items-center gap-1 cursor-pointer"
+                      >
+                        <ArrowRightLeft className="w-3 h-3" />
+                        + تغذية خزينة فرعية
+                      </button>
+                    </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {subSafes.filter(s => String(s.parent_safe_id) === String(safe.id)).map(sub => (
-                        <div key={sub.id} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between gap-3">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-800 text-sm">{sub.name}</span>
-                              <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold">
-                                فرعية مستقلة
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-500">
-                              المسؤول: {sub.custodian_name || 'غير محدد'} 
-                              {sub.custodian_phone && <span className="mr-2 text-emerald-600 font-mono">({sub.custodian_phone})</span>}
-                            </p>
-                          </div>
-
-                          <div className="text-left flex items-center gap-3">
-                            <div>
-                              <p className="text-[10px] text-slate-400 font-bold">رصيد العهدة</p>
-                              <p className="font-black text-lg text-amber-700 font-mono">
-                                {fmt(sub.current_balance)} <span className="text-[10px]">ج.م</span>
+                        <div key={sub.id} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs space-y-3">
+                          {/* Sub-Safe Header: Info & Balance (Never Overflows!) */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-black text-slate-800 text-sm truncate">{sub.name}</span>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                  sub.is_trust
+                                    ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {sub.is_trust ? 'خزينة أمانات' : 'فرعية مستقلة'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 truncate">
+                                المسؤول: {sub.custodian_name || 'غير محدد'} 
+                                {sub.custodian_phone && <span className="mr-1.5 text-emerald-600 font-mono text-[11px]" dir="ltr">({sub.custodian_phone})</span>}
                               </p>
                             </div>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={() => {
-                                  setSelectedSubSafe(sub);
-                                  loadSubSafeTransactions(sub.id);
-                                }}
-                                className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all hover:shadow"
-                                title="الدخول ومراجعة دفتر حركات الخزينة الفرعية والصرف منها"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                دخول ومراجعة
-                              </button>
-                              <button
-                                onClick={() => openSubSafeExpenseModal(sub)}
-                                className="flex items-center gap-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all hover:shadow"
-                                title="صرف مصروف من الخزينة الفرعية برقم إيصال J1"
-                              >
-                                <DollarSign className="w-3.5 h-3.5" />
-                                صرف (J1)
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setTxForm({
-                                    safe_id: String(safe.id),
-                                    type: 'sub_replenish',
-                                    amount: '',
-                                    description: `تغذية عهدة الخزينة الفرعية (${sub.name})`,
-                                    reference_no: '',
-                                    related_employee_id: '',
-                                    related_employee_name: sub.custodian_name || '',
-                                    related_safe_id: String(sub.id),
-                                    sender_phone: '',
-                                    transaction_date: today(),
-                                    notes: '',
-                                    withDenom: false
-                                  });
-                                  setShowTxModal(true);
-                                }}
-                                className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg text-xs font-bold border border-amber-200 cursor-pointer"
-                                title="تغذية الخزينة الفرعية بعهدة"
-                              >
-                                تغذية
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setEditSafe(sub);
-                                  setSafeForm({
-                                    name: sub.name,
-                                    type: sub.type,
-                                    parent_safe_id: String(sub.parent_safe_id || safe.id),
-                                    custodian_name: sub.custodian_name || '',
-                                    custodian_phone: sub.custodian_phone || '',
-                                    custodian_employee_id: sub.custodian_employee_id || '',
-                                    notes: sub.notes || ''
-                                  });
-                                  setShowNewSafeModal(true);
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
+
+                            {/* Safe Balance Pill */}
+                            <div className="text-left bg-amber-50/80 border border-amber-200/60 px-3 py-1.5 rounded-xl shrink-0">
+                              <p className="text-[10px] text-amber-800 font-bold">رصيد العهدة</p>
+                              <p className="font-black text-base sm:text-lg text-amber-900 font-mono">
+                                {fmt(sub.current_balance)} <span className="text-[10px] font-sans font-normal">ج.م</span>
+                              </p>
                             </div>
+                          </div>
+
+                          {/* Sub-Safe Action Bar: Responsive, wraps cleanly on mobile! */}
+                          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                            <button
+                              onClick={() => {
+                                setSelectedSubSafe(sub);
+                                loadSubSafeTransactions(sub.id);
+                              }}
+                              className="flex-1 min-w-[105px] flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all hover:shadow"
+                              title="الدخول ومراجعة دفتر حركات الخزينة الفرعية والصرف منها"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>دخول ومراجعة</span>
+                            </button>
+
+                            <button
+                              onClick={() => openSubSafeExpenseModal(sub)}
+                              className="flex-1 min-w-[95px] flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all hover:shadow"
+                              title="صرف مصروف من الخزينة الفرعية برقم إيصال J1"
+                            >
+                              <DollarSign className="w-3.5 h-3.5" />
+                              <span>صرف (J1)</span>
+                            </button>
+
+                            <button
+                              onClick={() => openSubReplenishModal(safe, sub)}
+                              className="flex-1 min-w-[105px] flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all hover:shadow"
+                              title="تغذية الخزينة الفرعية بعهدة من الخزينة الرئيسية"
+                            >
+                              <ArrowDownCircle className="w-3.5 h-3.5" />
+                              <span>+ تغذية العهدة</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setEditSafe(sub);
+                                setSafeForm({
+                                  name: sub.name,
+                                  type: sub.type,
+                                  parent_safe_id: String(sub.parent_safe_id || safe.id),
+                                  custodian_name: sub.custodian_name || '',
+                                  custodian_phone: sub.custodian_phone || '',
+                                  custodian_employee_id: sub.custodian_employee_id || '',
+                                  notes: sub.notes || '',
+                                  is_trust: sub.is_trust || 0
+                                });
+                                setShowNewSafeModal(true);
+                              }}
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors shrink-0"
+                              title="تعديل بيانات الخزينة"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -3303,6 +3558,840 @@ export default function TreasuryPage() {
         </div>
       )}
 
+      {/* ══════════════════ TAB: TRUSTS & TEMPORARY CUSTODIES (الأمانات والعهد ومواعيد الرد) ══════════════════ */}
+      {activeTab === 'trusts' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-gradient-to-r from-teal-800 via-teal-900 to-slate-900 rounded-3xl p-6 text-white shadow-md flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-teal-500/20 text-teal-300 border border-teal-500/30 flex items-center justify-center shrink-0">
+                <Coins className="w-7 h-7" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-black">سجل الأمانات والعهد المؤقتة ومتابعة مواعيد الرد</h2>
+                  <span className="px-2.5 py-0.5 bg-teal-500/30 text-teal-200 border border-teal-500/40 rounded-full text-xs font-bold">
+                    خزينة الأمانات والعهد
+                  </span>
+                </div>
+                <p className="text-xs text-teal-100/80 mt-1 max-w-2xl">
+                  متابعة المبالغ المنصرفة على سبيل الأمانة أو العهدة لموظفين أو أشخاص خارجيين، مع تحديد موعد الرد، وعند رد المبلغ يتم إيداعه بالخزينة وتصفيته وحذفه من عليه آلياً.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadTrusts}
+                className="p-2.5 text-teal-200 hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
+                title="تحديث البيانات"
+              >
+                <RefreshCw className={`w-4 h-4 ${trustsLoading ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={() => openNewTrustModal()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-black rounded-xl text-xs shadow-md transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                صرف أمانة / عهدة جديدة
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs min-w-0">
+              <span className="text-xs font-bold text-slate-500 block truncate">إجمالي الأمانات المصروفة</span>
+              <p className="text-xl sm:text-2xl font-black font-mono text-slate-800 mt-1 truncate">
+                {fmt(trusts.reduce((s, t) => s + (t.amount || 0), 0))} <span className="text-xs font-sans text-slate-400 font-normal">ج.م</span>
+              </p>
+            </div>
+
+            <div className="bg-rose-50/70 p-4 rounded-2xl border border-rose-200 shadow-xs min-w-0">
+              <span className="text-xs font-bold text-rose-800 block truncate">المتبقي غير المسدد (عهود قائمة)</span>
+              <p className="text-xl sm:text-2xl font-black font-mono text-rose-700 mt-1 truncate">
+                {fmt(trusts.reduce((s, t) => s + (t.remaining_amount || 0), 0))} <span className="text-xs font-sans text-rose-500 font-normal">ج.م</span>
+              </p>
+            </div>
+
+            <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 shadow-xs min-w-0">
+              <span className="text-xs font-bold text-emerald-800 block truncate">إجمالي ما تم استرداده للخزينة</span>
+              <p className="text-xl sm:text-2xl font-black font-mono text-emerald-700 mt-1 truncate">
+                {fmt(trusts.reduce((s, t) => s + (t.returned_amount || 0), 0))} <span className="text-xs font-sans text-emerald-500 font-normal">ج.م</span>
+              </p>
+            </div>
+
+            <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200 shadow-xs min-w-0">
+              <span className="text-xs font-bold text-amber-800 block truncate">أمانات متأخرة تجاوزت موعد الرد</span>
+              <p className="text-xl sm:text-2xl font-black font-mono text-amber-900 mt-1 truncate">
+                {trusts.filter(t => t.is_overdue).length} <span className="text-xs font-sans text-amber-700 font-normal">أمانة متأخرة</span>
+              </p>
+            </div>
+          </div>
+
+          {/* Filter & Search Bar */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              {[
+                { id: 'all', label: `الكل (${trusts.length})` },
+                { id: 'active', label: `عهود قائمة طرف الأشخاص (${trusts.filter(t => t.remaining_amount > 0 && !t.is_overdue).length})` },
+                { id: 'overdue', label: `⚠️ متأخرة عن موعد الرد (${trusts.filter(t => t.is_overdue).length})` },
+                { id: 'returned', label: `✓ تم الرد والتصفية (${trusts.filter(t => t.remaining_amount <= 0.01).length})` }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setTrustFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                    trustFilter === f.id
+                      ? 'bg-teal-700 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="بحث بالاسم، الهاتف، أو الغرض..."
+                value={trustSearch}
+                onChange={e => setTrustSearch(e.target.value)}
+                className="w-full pr-9 pl-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-teal-500"
+              />
+            </div>
+          </div>
+
+          {/* List of Trusts */}
+          <div className="space-y-3">
+            {trusts
+              .filter(t => {
+                if (trustFilter === 'active') return t.remaining_amount > 0 && !t.is_overdue;
+                if (trustFilter === 'overdue') return t.is_overdue;
+                if (trustFilter === 'returned') return t.remaining_amount <= 0.01;
+                return true;
+              })
+              .filter(t => {
+                if (!trustSearch) return true;
+                const q = trustSearch.toLowerCase();
+                return (
+                  t.person_name?.toLowerCase().includes(q) ||
+                  t.person_phone?.includes(q) ||
+                  t.purpose?.toLowerCase().includes(q) ||
+                  t.safe_name?.toLowerCase().includes(q)
+                );
+              })
+              .length === 0 ? (
+                <div className="bg-white rounded-3xl p-12 text-center text-slate-400 border border-dashed border-slate-200 space-y-2">
+                  <Coins className="w-8 h-8 mx-auto text-slate-300" />
+                  <p className="font-bold text-sm">لا توجد أمانات أو عهد مسجلة بهذا الفلتر</p>
+                  <p className="text-xs text-slate-400">اضغط "صرف أمانة / عهدة جديدة" لتسجيل مبلغ طرف شخص وتحديد موعد الرد</p>
+                </div>
+              ) : (
+                trusts
+                  .filter(t => {
+                    if (trustFilter === 'active') return t.remaining_amount > 0 && !t.is_overdue;
+                    if (trustFilter === 'overdue') return t.is_overdue;
+                    if (trustFilter === 'returned') return t.remaining_amount <= 0.01;
+                    return true;
+                  })
+                  .filter(t => {
+                    if (!trustSearch) return true;
+                    const q = trustSearch.toLowerCase();
+                    return (
+                      t.person_name?.toLowerCase().includes(q) ||
+                      t.person_phone?.includes(q) ||
+                      t.purpose?.toLowerCase().includes(q) ||
+                      t.safe_name?.toLowerCase().includes(q)
+                    );
+                  })
+                  .map(t => {
+                    const isFullyReturned = t.remaining_amount <= 0.01;
+                    return (
+                      <div
+                        key={t.id}
+                        className={`bg-white rounded-2xl p-4 sm:p-5 border transition-all shadow-xs space-y-3 ${
+                          t.is_overdue
+                            ? 'border-rose-300 bg-rose-50/20'
+                            : isFullyReturned
+                            ? 'border-emerald-200 bg-emerald-50/20'
+                            : 'border-slate-200'
+                        }`}
+                      >
+                        {/* Top: Person Info, Status Badge, Due Date */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3 border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base shrink-0 ${
+                              isFullyReturned
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : t.is_overdue
+                                ? 'bg-rose-100 text-rose-800 animate-pulse'
+                                : 'bg-teal-100 text-teal-800'
+                            }`}>
+                              {t.person_type === 'employee' ? '👤' : '🏢'}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-black text-slate-800 text-sm">{t.person_name}</span>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                                  {t.person_type === 'employee' ? 'موظف بالشركة' : 'شخص خارجي'}
+                                </span>
+                                {t.safe_name && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                    {t.safe_name}
+                                  </span>
+                                )}
+                              </div>
+                              {t.person_phone && (
+                                <p className="text-xs text-slate-500 font-mono mt-0.5" dir="ltr">
+                                  📞 {t.person_phone}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Due Date & Smart Status Badge */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {isFullyReturned ? (
+                              <span className="px-3 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                تم الرد بالكامل وتصفية العهدة
+                              </span>
+                            ) : t.is_overdue ? (
+                              <span className="px-3 py-1 bg-rose-100 text-rose-800 border border-rose-300 rounded-xl text-xs font-black flex items-center gap-1.5 animate-bounce">
+                                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                                متأخرة عن موعد الرد! (الموعد: {t.due_date})
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                                موعد الرد المحدد: {t.due_date}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Middle: Financials & Purpose */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50/70 p-3 rounded-xl text-xs">
+                          <div>
+                            <span className="text-[11px] text-slate-400 block font-bold">مبلغ الأمانة الأصلي</span>
+                            <p className="font-mono font-bold text-slate-800 text-sm mt-0.5">{fmt(t.amount)} ج.م</p>
+                          </div>
+
+                          <div>
+                            <span className="text-[11px] text-slate-400 block font-bold">ما تم رده واسترداده</span>
+                            <p className="font-mono font-bold text-emerald-700 text-sm mt-0.5">{fmt(t.returned_amount)} ج.م</p>
+                          </div>
+
+                          <div>
+                            <span className="text-[11px] font-bold block text-rose-700">المتبقي طرفه (غير مسدد)</span>
+                            <p className="font-mono font-black text-rose-700 text-base mt-0.5">
+                              {fmt(t.remaining_amount)} <span className="text-xs font-sans">ج.م</span>
+                            </p>
+                          </div>
+
+                          <div>
+                            <span className="text-[11px] text-slate-400 block font-bold">تاريخ الاستلام</span>
+                            <p className="font-mono text-slate-600 text-xs mt-0.5">{t.given_date}</p>
+                          </div>
+                        </div>
+
+                        {/* Purpose & Notes */}
+                        {(t.purpose || t.notes) && (
+                          <div className="text-xs text-slate-600 bg-white p-2 rounded-lg border border-slate-100 flex items-center gap-2">
+                            <span className="font-bold text-slate-700">الغرض / البيان:</span>
+                            <span>{t.purpose || t.notes}</span>
+                          </div>
+                        )}
+
+                        {/* Actions */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                          <div className="text-[11px] text-slate-400">
+                            {isFullyReturned ? (
+                              <span className="text-emerald-700 font-bold">✓ تم إخلاء طرف المستلم وتصفية المبلغ بالكامل من عليه</span>
+                            ) : (
+                              <span>الأمانة قائمة ومسجلة على ذمة المستلم حتى تاريخ الرد</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {!isFullyReturned && (
+                              <button
+                                onClick={() => openReturnTrustModal(t)}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5 transition-all"
+                              >
+                                <ArrowDownCircle className="w-3.5 h-3.5" />
+                                <span>↩️ إثبات رد الأمانة (إخلاء طرف)</span>
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => handleDeleteTrust(t.id, t.person_name)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                              title="حذف / إلغاء الأمانة"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════ MODAL: SUB-SAFE REPLENISH (تغذية الخزينة الفرعية بعهدة) ══════════════════ */}
+      {showSubReplenishModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 p-6 space-y-5 my-6 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-amber-100 text-amber-800 rounded-2xl">
+                  <ArrowRightLeft className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 text-base">
+                    تغذية خزينة فرعية بعهدة نقدية
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    تحويل عهدة من الخزينة الرئيسية إلى خزينة فرعية ومطابقة الرصيدين
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSubReplenishModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-xl"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubReplenishSubmit} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Source Safe (Main) */}
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">الخزينة المصدر (الرئيسية) *</label>
+                  <select
+                    required
+                    value={subReplenishForm.main_safe_id}
+                    onChange={e => setSubReplenishForm(f => ({ ...f, main_safe_id: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 font-bold bg-slate-50"
+                  >
+                    {mainSafes.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} (رصيد: {fmt(s.current_balance)} ج.م)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Target Sub Safe */}
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">الخزينة الفرعية المستلمة للعهدة *</label>
+                  <select
+                    required
+                    value={subReplenishForm.sub_safe_id}
+                    onChange={e => {
+                      const selected = subSafes.find(s => String(s.id) === e.target.value);
+                      setSubReplenishForm(f => ({
+                        ...f,
+                        sub_safe_id: e.target.value,
+                        custodian_name: selected?.custodian_name || f.custodian_name,
+                        notes: selected ? `تغذية عهدة نقدية لخزينة ${selected.name}` : f.notes
+                      }));
+                    }}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 font-bold bg-white focus:outline-amber-500"
+                  >
+                    <option value="">-- اختر الخزينة الفرعية --</option>
+                    {subSafes.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} — المسؤول: {s.custodian_name || 'غير محدد'} (رصيدها الحالي: {fmt(s.current_balance)} ج.م)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Amount with quick pills */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">مبلغ التغذية (ج.م) *</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    required
+                    value={subReplenishForm.amount}
+                    onChange={e => setSubReplenishForm(f => ({ ...f, amount: e.target.value }))}
+                    placeholder="أدخل المبلغ بالجنيه..."
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-base font-black font-mono text-emerald-700 focus:outline-amber-500"
+                  />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">ج.م</span>
+                </div>
+                {/* Quick amount buttons */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  <span className="text-[10px] text-slate-400 font-bold">مبالغ سريعة:</span>
+                  {[1000, 2000, 5000, 10000, 20000].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setSubReplenishForm(f => ({ ...f, amount: String(val) }))}
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                    >
+                      +{val.toLocaleString()} ج
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">تاريخ التغذية *</label>
+                  <input
+                    type="date"
+                    required
+                    value={subReplenishForm.date}
+                    onChange={e => setSubReplenishForm(f => ({ ...f, date: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">اسم المستلم للعهدة (المسؤول)</label>
+                  <input
+                    type="text"
+                    value={subReplenishForm.custodian_name}
+                    onChange={e => setSubReplenishForm(f => ({ ...f, custodian_name: e.target.value }))}
+                    placeholder="مثال: أمين عهدة المخزن..."
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">بيان أو ملاحظات</label>
+                <input
+                  type="text"
+                  value={subReplenishForm.notes}
+                  onChange={e => setSubReplenishForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="ملاحظات..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowSubReplenishModal(false)}
+                  className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-6 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-bold rounded-xl cursor-pointer shadow-xs flex items-center gap-2"
+                >
+                  <ArrowRightLeft className="w-4 h-4" />
+                  {saving ? 'جاري التحويل...' : 'تأكيد تغذية الخزينة وتحويل العهدة'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════ MODAL: DISBURSE TRUST / CUSTODY (صرف أمانة / عهدة مؤقتة وموعد الرد) ══════════════════ */}
+      {showNewTrustModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 p-6 space-y-5 my-6 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-teal-100 text-teal-800 rounded-2xl">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 text-base">
+                    صرف أمانة / عهدة مؤقتة (مع تحديد موعد الرد)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    أخذ مبلغ على سبيل العهدة أو الأمانة وتحديد موعد الرد، وتصفيتها وحذفها عند الرد
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowNewTrustModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-xl"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTrustSubmit} className="space-y-4 text-xs">
+              {/* Safe Selection */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">الخزينة المنصرف منها *</label>
+                <select
+                  required
+                  value={newTrustForm.safe_id}
+                  onChange={e => setNewTrustForm(f => ({ ...f, safe_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 font-bold bg-slate-50 focus:outline-teal-500"
+                >
+                  <option value="">-- اختر الخزينة --</option>
+                  {safes.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.type === 'main' ? 'رئيسية' : 'فرعية'}) — الرصيد: {fmt(s.current_balance)} ج.م
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Recipient Type Tabs */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">نوع المستلم للأمانة *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewTrustForm(f => ({ ...f, person_type: 'employee' }))}
+                    className={`py-2 px-3 rounded-xl font-bold transition-all border ${
+                      newTrustForm.person_type === 'employee'
+                        ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    👤 موظف مسجل بالشركة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewTrustForm(f => ({ ...f, person_type: 'external', employee_id: '' }))}
+                    className={`py-2 px-3 rounded-xl font-bold transition-all border ${
+                      newTrustForm.person_type === 'external'
+                        ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    🏢 شخص خارجي / مندوب / فني
+                  </button>
+                </div>
+              </div>
+
+              {newTrustForm.person_type === 'employee' ? (
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">اختر الموظف *</label>
+                  <select
+                    required
+                    value={newTrustForm.employee_id}
+                    onChange={e => {
+                      const emp = employees.find(em => String(em.id) === e.target.value);
+                      setNewTrustForm(f => ({
+                        ...f,
+                        employee_id: e.target.value,
+                        person_name: emp ? emp.name : '',
+                        person_phone: emp?.phone || ''
+                      }));
+                    }}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white font-bold"
+                  >
+                    <option value="">-- اختر الموظف من القائمة --</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.name} ({emp.code}) — {emp.job_title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1.5">اسم الشخص المستلم *</label>
+                    <input
+                      required
+                      type="text"
+                      value={newTrustForm.person_name}
+                      onChange={e => setNewTrustForm(f => ({ ...f, person_name: e.target.value }))}
+                      placeholder="الاسم ثلاثي..."
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1.5">رقم الهاتف (للتواصل والواتساب)</label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={newTrustForm.person_phone}
+                      onChange={e => setNewTrustForm(f => ({ ...f, person_phone: e.target.value }))}
+                      placeholder="01012345678"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-white font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">مبلغ الأمانة / العهدة (ج.م) *</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    required
+                    value={newTrustForm.amount}
+                    onChange={e => setNewTrustForm(f => ({ ...f, amount: e.target.value }))}
+                    placeholder="أدخل المبلغ..."
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-base font-black font-mono text-teal-800"
+                  />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">ج.م</span>
+                </div>
+              </div>
+
+              {/* Dates: Given Date and DUE DATE */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">تاريخ أخذ المبلغ *</label>
+                  <input
+                    type="date"
+                    required
+                    value={newTrustForm.given_date}
+                    onChange={e => setNewTrustForm(f => ({ ...f, given_date: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-rose-700 mb-1.5 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5" />
+                    موعد الرد المحدد (تاريخ الاستحقاق) *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={newTrustForm.due_date}
+                    onChange={e => setNewTrustForm(f => ({ ...f, due_date: e.target.value }))}
+                    className="w-full border-2 border-rose-300 rounded-xl px-3 py-2 bg-rose-50/50 font-bold text-rose-900 focus:border-rose-500"
+                  />
+                </div>
+              </div>
+
+              {/* Quick presets for due date */}
+              <div className="flex flex-wrap items-center gap-1.5 p-2 bg-slate-50 rounded-xl">
+                <span className="text-[10px] text-slate-500 font-bold">تحديد سريع لموعد الرد:</span>
+                {[
+                  { label: 'بعد 3 أيام', days: 3 },
+                  { label: 'بعد أسبوع', days: 7 },
+                  { label: 'بعد 15 يوم', days: 15 },
+                  { label: 'بعد شهر', days: 30 }
+                ].map(p => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + p.days);
+                      setNewTrustForm(f => ({ ...f, due_date: d.toISOString().split('T')[0] }));
+                    }}
+                    className="px-2 py-0.5 bg-white hover:bg-teal-50 text-slate-700 hover:text-teal-800 border border-slate-200 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Purpose & Notes */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">الغرض من الأمانة / سبب الصرف</label>
+                <input
+                  type="text"
+                  value={newTrustForm.purpose}
+                  onChange={e => setNewTrustForm(f => ({ ...f, purpose: e.target.value }))}
+                  placeholder="مثال: شراء قطع غيار، أمانة نقدية تحت الحساب، مهمة عمل..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">ملاحظات إضافية</label>
+                <input
+                  type="text"
+                  value={newTrustForm.notes}
+                  onChange={e => setNewTrustForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="ملاحظات..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowNewTrustModal(false)}
+                  className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-6 py-2.5 bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-700 hover:to-cyan-800 text-white font-bold rounded-xl cursor-pointer shadow-xs flex items-center gap-2"
+                >
+                  <Coins className="w-4 h-4" />
+                  {saving ? 'جاري الصرف...' : 'تأكيد صرف الأمانة وحفظ موعد الرد'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════ MODAL: RETURN TRUST (رد واسترداد الأمانة وتصفيتها) ══════════════════ */}
+      {showReturnTrustModal && selectedTrustForReturn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 p-6 space-y-5 my-6 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-emerald-100 text-emerald-800 rounded-2xl">
+                  <ArrowDownCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 text-base">
+                    إثبات رد واسترداد الأمانة (إخلاء طرف)
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    عند رد المبلغ يتم إيداعه بالخزينة وحذف وتصفية المبلغ من على المستلم
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowReturnTrustModal(false); setSelectedTrustForReturn(null); }}
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-xl"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Trust Info Summary Card */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-500">اسم المستلم:</span>
+                  <p className="text-sm font-black text-slate-800">{selectedTrustForReturn.person_name}</p>
+                </div>
+                {selectedTrustForReturn.person_phone && (
+                  <span className="text-xs font-mono text-emerald-700 font-bold" dir="ltr">
+                    {selectedTrustForReturn.person_phone}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200 text-center">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">مبلغ الأمانة الأصلي</span>
+                  <p className="font-mono font-bold text-slate-700 text-xs">{fmt(selectedTrustForReturn.amount)} ج.م</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">ما تم رده سابقاً</span>
+                  <p className="font-mono font-bold text-emerald-600 text-xs">{fmt(selectedTrustForReturn.returned_amount)} ج.م</p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-rose-500 font-bold block">المتبقي المطلوب رده</span>
+                  <p className="font-mono font-black text-rose-700 text-xs">{fmt(selectedTrustForReturn.remaining_amount)} ج.م</p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleReturnTrustSubmit} className="space-y-4 text-xs">
+              {/* Target Safe to receive the refund */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">الخزينة المودع بها المبلغ المردود *</label>
+                <select
+                  required
+                  value={returnTrustForm.return_safe_id}
+                  onChange={e => setReturnTrustForm(f => ({ ...f, return_safe_id: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 font-bold bg-white focus:outline-emerald-500"
+                >
+                  {safes.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.type === 'main' ? 'رئيسية' : 'فرعية'}) — الرصيد الحالي: {fmt(s.current_balance)} ج.م
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Return Amount */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">المبلغ المردود (ج.م) *</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    max={selectedTrustForReturn.remaining_amount}
+                    required
+                    value={returnTrustForm.amount}
+                    onChange={e => setReturnTrustForm(f => ({ ...f, amount: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-base font-black font-mono text-emerald-700"
+                  />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">ج.م</span>
+                </div>
+                <div className="flex items-center justify-between mt-1 text-[11px]">
+                  <span className="text-slate-400">يمكن رد المبلغ كاملاً أو جزء منه</span>
+                  <button
+                    type="button"
+                    onClick={() => setReturnTrustForm(f => ({ ...f, amount: String(selectedTrustForReturn.remaining_amount) }))}
+                    className="text-emerald-700 font-bold hover:underline"
+                  >
+                    رد المبلغ كاملاً ({fmt(selectedTrustForReturn.remaining_amount)} ج.م)
+                  </button>
+                </div>
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">تاريخ رد الأمانة *</label>
+                <input
+                  type="date"
+                  required
+                  value={returnTrustForm.return_date}
+                  onChange={e => setReturnTrustForm(f => ({ ...f, return_date: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">ملاحظات الرد والتسوية</label>
+                <input
+                  type="text"
+                  value={returnTrustForm.notes}
+                  onChange={e => setReturnTrustForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="ملاحظات..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setShowReturnTrustModal(false); setSelectedTrustForReturn(null); }}
+                  className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl cursor-pointer shadow-xs flex items-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  {saving ? 'جاري التسوية...' : 'تأكيد رد الأمانة وتصفيتها من على المستلم'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ══════════════════ MODAL: DISBURSE MID-MONTH EXPENSES (يوم 10 أو 20) ══════════════════ */}
       {showMidMonthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
@@ -3880,6 +4969,21 @@ export default function TreasuryPage() {
                   </select>
                 </div>
               )}
+
+              <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-purple-900">
+                  <input
+                    type="checkbox"
+                    checked={!!safeForm.is_trust}
+                    onChange={e => setSafeForm(f => ({ ...f, is_trust: e.target.checked ? 1 : 0 }))}
+                    className="w-4 h-4 text-purple-600 rounded"
+                  />
+                  <span>🏷️ تخصيص كـ "خزينة أمانات وعهد مؤقتة" (للصرف والاسترداد مع تحديد موعد الرد)</span>
+                </label>
+                <p className="text-[11px] text-purple-700 mt-1 mr-6">
+                  تظهر بتمييز خاص وتُستخدم لصرف العهد والأمانات المؤقتة ومتابعة مواعيد ردها وتصفيتها.
+                </p>
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
