@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/portal",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/warehouse-portal",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
