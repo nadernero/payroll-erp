@@ -72,6 +72,13 @@ async function main() {
       console.log('✅ جميع الجداول الأساسية موجودة في المخطط (Public Schema).');
     }
 
+    // Ensure all columns exist in Supabase
+    await client.query(`
+      ALTER TABLE cash_safes ADD COLUMN IF NOT EXISTS is_trust BOOLEAN DEFAULT FALSE;
+      ALTER TABLE cash_safes ADD COLUMN IF NOT EXISTS safe_category TEXT DEFAULT 'general';
+      ALTER TABLE cash_transactions ADD COLUMN IF NOT EXISTS trust_id INTEGER;
+    `);
+
     // Step 3: Check row counts in each table and sync if needed
     console.log('\n📊 جاري فحص عدد السجلات ومزامنة البيانات من SQLite المحلي إذا لزم الأمر...');
     const sqlitePath = path.join(__dirname, '..', 'data', 'payroll.db');

@@ -296,6 +296,10 @@ router.get('/', (req, res) => {
       }
     }
 
+    if (dateList.length === 0) {
+      allCombined.push(...Array.from(existingMap.values()));
+    }
+
     // Sort chronologically descending: newest date first, then employee code
     allCombined.sort((a, b) => {
       if (a.date !== b.date) return b.date.localeCompare(a.date);
