@@ -13,13 +13,22 @@ if (process.env.VERCEL) {
   const tmpDir = os.tmpdir();
   const tmpDbPath = path.join(tmpDir, 'payroll.db');
   if (!fs.existsSync(tmpDbPath)) {
-    if (fs.existsSync(originalDbPath)) {
+    const candidates = [
+      originalDbPath,
+      path.join(process.cwd(), 'data', 'payroll.db'),
+      path.resolve('data', 'payroll.db'),
+      path.join(__dirname, '..', '..', 'data', 'payroll.db')
+    ];
+    const found = candidates.find(p => fs.existsSync(p));
+    if (found) {
       try {
-        fs.copyFileSync(originalDbPath, tmpDbPath);
-        console.log('⚡ Initialized /tmp/payroll.db from bundled database on Vercel');
+        fs.copyFileSync(found, tmpDbPath);
+        console.log(`⚡ Initialized /tmp/payroll.db from bundled database at ${found}`);
       } catch (e) {
         console.error('Failed to copy seed db to /tmp:', e);
       }
+    } else {
+      console.warn('⚠️ No bundled database found at candidates:', candidates);
     }
   }
   effectiveDbPath = tmpDbPath;

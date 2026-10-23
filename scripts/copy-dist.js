@@ -6,10 +6,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.join(__dirname, '..');
 
-const src = path.join(root, 'client', 'dist');
-const dest = path.join(root, 'dist');
+const rootDist = path.join(root, 'dist');
+const clientDist = path.join(root, 'client', 'dist');
 
-if (fs.existsSync(src)) {
-  fs.cpSync(src, dest, { recursive: true });
-  console.log('✓ Copied client/dist to root dist for Vercel deployment');
+// If root dist exists, copy to client/dist (for Firebase)
+if (fs.existsSync(rootDist)) {
+  fs.cpSync(rootDist, clientDist, { recursive: true });
+} else if (fs.existsSync(clientDist)) {
+  fs.cpSync(clientDist, rootDist, { recursive: true });
 }
+
+console.log('✓ Synchronized dist and client/dist folders');

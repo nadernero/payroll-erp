@@ -3,7 +3,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const dbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+const DEFAULT_SUPABASE_URL = 'postgresql://postgres.pnvsmqihnrrowfqlkqjo:Id%4022031981%402203@aws-0-eu-west-1.pooler.supabase.com:6543/postgres?pgbouncer=true';
+const dbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL || DEFAULT_SUPABASE_URL;
 
 let pool = null;
 if (dbUrl) {
@@ -57,6 +58,62 @@ export async function deleteFromSupabase(table, id) {
   } catch (err) {
     console.error(`⚠️ [Supabase Realtime Delete Error in ${table}]:`, err.message);
     return false;
+  }
+}
+
+/**
+ * Pull all data from Supabase into local SQLite (e.g. on cold start in Vercel)
+ */
+export async function pullFromSupabase(sqliteDb) {
+  if (!pool) return { success: false, reason: 'No DB pool' };
+  try {
+    const client = await pool.connect();
+    const TABLES = [
+      'treasury_parties',
+      'cash_safes',
+      'employees',
+      'official_holidays',
+      'biometric_devices',
+      'loans',
+      'leaves',
+      'attendance',
+      'mid_month_expenses',
+      'employee_requests',
+      'payroll_runs',
+      'payroll_items',
+      'salary_history',
+      'cash_transactions',
+      'cash_denominations'
+    ];
+
+    for (const table of TABLES) {
+      try {
+        const res = await client.query(`SELECT * FROM "${table}"`);
+        if (!res.rows || res.rows.length === 0) continue;
+
+        const cols = Object.keys(res.rows[0]);
+        const colList = cols.map(c => `"${c}"`).join(', ');
+        const placeholders = cols.map(() => '?').join(', ');
+        const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO "${table}" (${colList}) VALUES (${placeholders})`);
+
+        sqliteDb.transaction(() => {
+          for (const row of res.rows) {
+            const values = cols.map(c => {
+              const val = row[c];
+              if (val instanceof Date) return val.toISOString();
+              return val;
+            });
+            stmt.run(...values);
+          }
+        })();
+      } catch (e) {}
+    }
+    client.release();
+    console.log('✅ [Supabase Sync]: Pulled remote data into SQLite successfully');
+    return { success: true };
+  } catch (err) {
+    console.error('⚠️ [Supabase Pull Error]:', err.message);
+    return { success: false, error: err.message };
   }
 }
 

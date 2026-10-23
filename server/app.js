@@ -25,6 +25,17 @@ const __dirname = path.dirname(__filename);
 // Initialize DB schema & seed data
 try {
   initDatabase();
+  // If running on Vercel and local table is empty, auto-pull from Supabase
+  if (process.env.VERCEL) {
+    try {
+      const cnt = db.prepare('SELECT count(*) as c FROM employees').get()?.c || 0;
+      if (cnt === 0) {
+        import('./supabaseSync.js').then(({ pullFromSupabase }) => {
+          pullFromSupabase(db);
+        });
+      }
+    } catch (e) {}
+  }
 } catch (e) {
   console.warn('initDatabase notice:', e.message);
 }
@@ -54,22 +65,28 @@ if (!fs.existsSync(treasuryUploadsDir)) {
 }
 app.use('/uploads', express.static(uploadsDir));
 
-// API Routes
-app.use('/api/employees', employeesRouter);
-app.use('/api/attendance', attendanceRouter);
-app.use('/api/expenses', expensesRouter);
-app.use('/api/loans', loansRouter);
-app.use('/api/leaves', leavesRouter);
-app.use('/api/payroll', payrollRouter);
-app.use('/api/portal', portalRouter);
-app.use('/api/requests', requestsRouter);
-app.use('/api/biometric', biometricRouter);
-app.use('/api/holidays', holidaysRouter);
-app.use('/api/treasury', treasuryRouter);
-app.use('/api/system', systemRouter);
+// API Routes (Mounted under both /api/* and /* for full compatibility with Vercel serverless rewrites)
+const routes = [
+  ['/employees', employeesRouter],
+  ['/attendance', attendanceRouter],
+  ['/expenses', expensesRouter],
+  ['/loans', loansRouter],
+  ['/leaves', leavesRouter],
+  ['/payroll', payrollRouter],
+  ['/portal', portalRouter],
+  ['/requests', requestsRouter],
+  ['/biometric', biometricRouter],
+  ['/holidays', holidaysRouter],
+  ['/treasury', treasuryRouter],
+  ['/system', systemRouter]
+];
+
+for (const [subPath, router] of routes) {
+  app.use([`/api${subPath}`, subPath], router);
+}
 
 // Quick health check
-app.get('/api/health', (req, res) => {
+app.get(['/api/health', '/health'], (req, res) => {
   res.json({
     status: 'online',
     appName: 'نظام إدارة المرتبات وشؤون العاملين | Payroll ERP',
