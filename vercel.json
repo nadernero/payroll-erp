@@ -7,18 +7,10 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.js"
+      "destination": "/api/$1"
     },
     {
-      "source": "/portal",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/warehouse-portal",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/((?!api/).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
