@@ -9,6 +9,10 @@
     "server": "node server/index.js",
     "client": "npm --prefix client run dev",
     "build": "npm --prefix client run build && node scripts/copy-dist.js",
+    "sync": "node scripts/sync-server.js",
+    "deploy:firebase": "npm run build && npx firebase deploy --only hosting --non-interactive",
+    "deploy:vercel": "node scripts/sync-server.js && git add . && git commit -m \"Update ERP\" && git push origin main",
+    "deploy:all": "npm run deploy:firebase && npm run deploy:vercel",
     "start": "node server/index.js"
   },
   "keywords": [
