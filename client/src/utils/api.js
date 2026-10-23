@@ -1,5 +1,12 @@
-// Base API Helper
-const API_BASE = '/api';
+// Base API Helper - Auto-detects environment (Local, Vercel, or Google Firebase)
+const isFirebase = typeof window !== 'undefined' && (
+  window.location.hostname.includes('.web.app') ||
+  window.location.hostname.includes('.firebaseapp.com')
+);
+
+const API_BASE = isFirebase 
+  ? 'https://payroll-erp-rho.vercel.app/api'
+  : '/api';
 
 export async function fetchJson(endpoint, options = {}) {
   const res = await fetch(`${API_BASE}${endpoint}`, {

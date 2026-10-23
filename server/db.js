@@ -1,22 +1,76 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbDir = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+const originalDbPath = path.join(__dirname, '..', 'data', 'payroll.db');
+let effectiveDbPath = originalDbPath;
+
+if (process.env.VERCEL) {
+  const tmpDir = os.tmpdir();
+  const tmpDbPath = path.join(tmpDir, 'payroll.db');
+  if (!fs.existsSync(tmpDbPath)) {
+    if (fs.existsSync(originalDbPath)) {
+      try {
+        fs.copyFileSync(originalDbPath, tmpDbPath);
+        console.log('⚡ Initialized /tmp/payroll.db from bundled database on Vercel');
+      } catch (e) {
+        console.error('Failed to copy seed db to /tmp:', e);
+      }
+    }
+  }
+  effectiveDbPath = tmpDbPath;
+} else {
+  const dbDir = path.join(__dirname, '..', 'data');
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
 }
 
-const dbPath = path.join(dbDir, 'payroll.db');
-const db = new Database(dbPath);
+let db = null;
+let isNative = false;
 
-// Enable foreign keys and WAL mode for high performance
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+if (!process.env.VERCEL) {
+  try {
+    const { default: BetterSqlite3 } = await import('better-sqlite3');
+    db = new BetterSqlite3(effectiveDbPath);
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    isNative = true;
+  } catch (err) {
+    console.warn('better-sqlite3 not available, falling back to node:sqlite:', err.message);
+  }
+}
+
+if (!isNative) {
+  const { DatabaseSync } = await import('node:sqlite');
+  db = new DatabaseSync(effectiveDbPath);
+  
+  if (!db.pragma) {
+    db.pragma = (sql) => {
+      try { db.exec(`PRAGMA ${sql}`); } catch (e) {}
+    };
+  }
+  if (!db.transaction) {
+    db.transaction = (fn) => {
+      return (...args) => {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          const res = fn(...args);
+          db.exec('COMMIT');
+          return res;
+        } catch (err) {
+          db.exec('ROLLBACK');
+          throw err;
+        }
+      };
+    };
+  }
+  db.pragma('foreign_keys = ON');
+}
 
 export function initDatabase() {
   db.exec(`

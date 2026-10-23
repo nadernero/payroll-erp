@@ -12,7 +12,8 @@ dist/
 .env.*.local
 
 # Local SQLite Database & Uploads
-data/
+data/*
+!data/payroll.db
 uploads/
 
 # Logs & Debug
