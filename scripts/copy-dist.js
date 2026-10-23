@@ -6,14 +6,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.join(__dirname, '..');
 
-const rootDist = path.join(root, 'dist');
 const clientDist = path.join(root, 'client', 'dist');
+const rootDist = path.join(root, 'dist');
 
-// If root dist exists, copy to client/dist (for Firebase)
-if (fs.existsSync(rootDist)) {
-  fs.cpSync(rootDist, clientDist, { recursive: true });
-} else if (fs.existsSync(clientDist)) {
+// Always copy the freshly built client/dist to root dist
+if (fs.existsSync(clientDist)) {
   fs.cpSync(clientDist, rootDist, { recursive: true });
+  console.log('✓ Synchronized client/dist to root dist');
 }
-
-console.log('✓ Synchronized dist and client/dist folders');

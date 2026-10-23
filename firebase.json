@@ -14,20 +14,19 @@
     ],
     "headers": [
       {
-        "source": "/sw.js",
+        "source": "**",
         "headers": [
           {
             "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      },
-      {
-        "source": "**/*.@(js|html|css)",
-        "headers": [
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          },
           {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
           }
         ]
       }
