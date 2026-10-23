@@ -17,6 +17,7 @@ if (process.env.VERCEL) {
       originalDbPath,
       path.join(process.cwd(), 'data', 'payroll.db'),
       path.resolve('data', 'payroll.db'),
+      path.join(__dirname, '..', 'data', 'payroll.db'),
       path.join(__dirname, '..', '..', 'data', 'payroll.db')
     ];
     const found = candidates.find(p => fs.existsSync(p));

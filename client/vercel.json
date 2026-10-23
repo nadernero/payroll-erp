@@ -1,8 +1,13 @@
 {
+  "functions": {
+    "api/**/*.js": {
+      "includeFiles": "data/**"
+    }
+  },
   "rewrites": [
     {
-      "source": "/api/:match*",
-      "destination": "/api/:match*"
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
     },
     {
       "source": "/:path*",
