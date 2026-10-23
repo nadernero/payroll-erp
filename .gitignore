@@ -4,6 +4,7 @@ client/node_modules/
 
 # Production Build
 client/dist/
+dist/
 
 # Environment Variables & Secrets (Keep your passwords safe!)
 .env
