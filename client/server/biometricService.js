@@ -221,7 +221,20 @@ class ZKTcpClient {
  * Test connectivity with ZKTeco Biometric Machine
  */
 export async function testDeviceConnection(ip, port = 4370, timeout = 7000) {
-  const client = new ZKTcpClient(ip, port, timeout);
+  const cleanIp = String(ip).trim();
+  const isPrivate = cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanIp) || cleanIp === '127.0.0.1' || cleanIp === 'localhost';
+
+  // If running on a cloud serverless environment (like Vercel), private LAN IPs cannot be reached from the public cloud
+  if (process.env.VERCEL && isPrivate) {
+    return {
+      success: false,
+      isPrivateNetwork: true,
+      message: `تنبيه: أنت تفحص الاتصال من السيرفر السحابي (Vercel)، بينما عنوان الماكينة (${cleanIp}) هو عنوان شبكة داخلية (LAN) خاصة براوتر الشركة.\n\nالسيرفر السحابي على الإنترنت لا يستطيع الوصول للشبكة الداخلية للشركة مباشرة بدون Port Forwarding.\n\n💡 الحلول المتاحة:\n1. اضغط دبل كليك على أداة "سحب_البصمة_والمزامنة_السحابية.bat" على كمبيوتر الشركة لسحب البصمات ورفعها للموقع السحابي في ثانيتين.\n2. أو افتح الموقع محلياً من كمبيوتر الشركة عبر: http://localhost:5000 وسيعمل الفحص والسحب مباشرة.`,
+      error: 'CLOUD_TO_LAN_NOT_ROUTABLE'
+    };
+  }
+
+  const client = new ZKTcpClient(cleanIp, port, timeout);
   try {
     await client.connect();
     let info = null;
@@ -235,7 +248,7 @@ export async function testDeviceConnection(ip, port = 4370, timeout = 7000) {
     return {
       success: true,
       protocol: 'tcp',
-      message: `تم الاتصال بنجاح بالماكينة على العنوان ${ip}:${port}`,
+      message: `تم الاتصال بنجاح بالماكينة على العنوان ${cleanIp}:${port}`,
       info: {
         logCounts: info.logCounts,
         userCounts: info.userCounts,
@@ -245,9 +258,13 @@ export async function testDeviceConnection(ip, port = 4370, timeout = 7000) {
     };
   } catch (err) {
     client.destroy();
+    let msg = `فشل الاتصال بالماكينة (${cleanIp}:${port}): ${err.message}`;
+    if (isPrivate) {
+      msg += `\n(ملاحظة: إذا كنت تفتح الموقع من خارج الشركة أو عبر السحاب، فإن عنوان IP داخلي (LAN) لا يمكن الوصول إليه إلا من داخل شبكة الشركة أو عبر أداة سحب البصمة السحابية)`;
+    }
     return {
       success: false,
-      message: `فشل الاتصال بالماكينة (${ip}:${port}): ${err.message}`,
+      message: msg,
       error: err.message,
     };
   }
@@ -259,6 +276,11 @@ export async function testDeviceConnection(ip, port = 4370, timeout = 7000) {
 export async function fetchDeviceAttendances(ip, port = 4370, timeout = 30000, protocol = 'tcp', filters = {}) {
   const cleanIp = ip.trim();
   const cleanPort = Number(port) || 4370;
+
+  const isPrivate = cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanIp) || cleanIp === '127.0.0.1' || cleanIp === 'localhost';
+  if (process.env.VERCEL && isPrivate) {
+    throw new Error(`تعذر السحب من الماكينة (${cleanIp}): هذا السيرفر سحابي (Vercel) ولا يمكنه الوصول إلى الماكينة الداخلية الخاصة براوتر الشركة مباشرة.\n\nيرجى تشغيل أداة "سحب_البصمة_والمزامنة_السحابية.bat" على جهاز الشركة لسحب الحركات ورفعها للسحاب فوراً.`);
+  }
   const client = new ZKTcpClient(cleanIp, cleanPort, Math.max(Number(timeout) || 30000, 20000));
 
   try {

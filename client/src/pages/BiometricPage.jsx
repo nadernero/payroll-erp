@@ -13,6 +13,17 @@ export default function BiometricPage() {
   const [networkInfo, setNetworkInfo] = useState(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
+  const isCloudMode = typeof window !== 'undefined' && 
+    !['localhost', '127.0.0.1'].includes(window.location.hostname) && 
+    !window.location.hostname.startsWith('192.168.') && 
+    !window.location.hostname.startsWith('10.');
+
+  const isPrivateIp = (ip) => {
+    if (!ip) return false;
+    const clean = String(ip).trim();
+    return clean.startsWith('192.168.') || clean.startsWith('10.') || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(clean) || clean === '127.0.0.1' || clean === 'localhost';
+  };
+
   // Testing connection state
   const [testingId, setTestingId] = useState(null);
   const [testResult, setTestResult] = useState(null);
@@ -271,6 +282,30 @@ export default function BiometricPage() {
         </div>
       )}
 
+      {/* Cloud Mode Notification */}
+      {isCloudMode && (
+        <div className="bg-amber-50/90 border border-amber-200 text-amber-900 p-4 rounded-2xl shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-amber-100 text-amber-700 rounded-xl mt-0.5">
+              <Server className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-amber-950">
+                أنت تتصفح النظام عبر الاستضافة السحابية 24/7
+              </h3>
+              <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                ماكينات البصمة التي تحمل عنوان شبكة داخلية (مثل 192.168.x.x) تقع داخل راوتر مقر الشركة.
+                لسحب حركات الموظفين ورفعها تلقائياً للسحابة:
+                <br />
+                1️⃣ اضغط دبل كليك على أداة <code className="bg-amber-100 font-mono font-bold text-amber-950 px-1.5 py-0.5 rounded border border-amber-200">سحب_البصمة_والمزامنة_السحابية.bat</code> على كمبيوتر الشركة.
+                <br />
+                2️⃣ أو افتح البرنامج محلياً من كمبيوتر الشركة: <a href="http://localhost:5000" target="_blank" rel="noreferrer" className="underline font-bold text-blue-700">http://localhost:5000</a> لسحب ومتابعة البصمات مباشرة.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Devices Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {devices.map((dev) => {
@@ -294,9 +329,16 @@ export default function BiometricPage() {
                     </div>
                   </div>
 
-                  <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">
-                    Port: {dev.port}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {isPrivateIp(dev.ip) && (
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                        شبكة داخلية (LAN)
+                      </span>
+                    )}
+                    <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">
+                      Port: {dev.port}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mt-4 p-3 bg-slate-50 rounded-xl space-y-1.5 text-xs font-mono">
@@ -328,10 +370,10 @@ export default function BiometricPage() {
                     ) : (
                       <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                     )}
-                    <div>
-                      <p className="font-semibold">{result.message}</p>
+                    <div className="flex-1">
+                      <p className="font-semibold whitespace-pre-line leading-relaxed">{result.message}</p>
                       {result.info && (
-                        <p className="text-[10px] text-emerald-700 mt-0.5 font-mono">
+                        <p className="text-[10px] text-emerald-700 mt-1 font-mono">
                           {typeof result.info === 'object' ? JSON.stringify(result.info) : result.info}
                         </p>
                       )}

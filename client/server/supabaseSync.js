@@ -167,24 +167,44 @@ export async function syncDatabase(sqliteDb) {
       }
       const remoteIds = new Set(remoteRows.map(r => r.id));
 
-      // 3. Push missing or updated rows from local to remote
-      if (localRows.length > 0) {
-        const cols = Object.keys(localRows[0]);
+      // 3. Push missing or updated rows from local to remote in high-speed batches
+      const rowsToInsert = localRows.filter(r => !remoteIds.has(r.id));
+      if (rowsToInsert.length > 0) {
+        const cols = Object.keys(rowsToInsert[0]);
         const colList = cols.map(c => `"${c}"`).join(', ');
-        const placeholders = cols.map((_, idx) => `$${idx + 1}`).join(', ');
         const updateList = cols.filter(c => c !== 'id').map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
 
-        for (const row of localRows) {
-          // If remote doesn't have it or we want to ensure sync
-          if (!remoteIds.has(row.id)) {
-            const values = cols.map(c => row[c]);
-            try {
-              await client.query(`
-                INSERT INTO "${table}" (${colList})
-                VALUES (${placeholders})
-                ON CONFLICT (id) DO UPDATE SET ${updateList}
-              `, values);
-            } catch (e) {}
+        const BATCH_SIZE = 50;
+        for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
+          const batch = rowsToInsert.slice(i, i + BATCH_SIZE);
+          const valueClauses = [];
+          const values = [];
+          let paramIdx = 1;
+
+          for (const row of batch) {
+            const placeholders = cols.map(() => `$${paramIdx++}`).join(', ');
+            valueClauses.push(`(${placeholders})`);
+            cols.forEach(c => values.push(row[c]));
+          }
+
+          try {
+            await client.query(`
+              INSERT INTO "${table}" (${colList})
+              VALUES ${valueClauses.join(', ')}
+              ON CONFLICT (id) DO UPDATE SET ${updateList}
+            `, values);
+          } catch (batchErr) {
+            // Fallback to row-by-row if any error occurs
+            for (const row of batch) {
+              try {
+                const singlePlaceholders = cols.map((_, idx) => `$${idx + 1}`).join(', ');
+                await client.query(`
+                  INSERT INTO "${table}" (${colList})
+                  VALUES (${singlePlaceholders})
+                  ON CONFLICT (id) DO UPDATE SET ${updateList}
+                `, cols.map(c => row[c]));
+              } catch (e) {}
+            }
           }
         }
 
