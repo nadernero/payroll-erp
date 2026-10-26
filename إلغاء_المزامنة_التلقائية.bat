@@ -1,29 +1,29 @@
 @echo off
 chcp 65001 >nul
-title إلغاء خدمة المزامنة الآلية لماكينات البصمة
+title Uninstall Payroll ERP Auto-Sync Service
 color 0C
 cd /d "%~dp0"
 cls
 
 echo ======================================================================
-echo    إلغاء خدمة المزامنة الآلية لماكينات البصمة من ويندوز
+echo    Payroll ERP - Uninstall Biometric Auto-Sync Service
 echo ======================================================================
 echo.
 
 set TASK_NAME=PayrollERP_BiometricSync
 
-echo جاري حذف المهمة المجدولة "%TASK_NAME%"...
+echo Removing Windows Scheduled Task "%TASK_NAME%"...
 schtasks /delete /tn "%TASK_NAME%" /f
 
 if %ERRORLEVEL% equ 0 (
     color 0A
     echo.
     echo ======================================================================
-    echo  [OK] تم إلغاء وإيقاف المزامنة الآلية بنجاح.
+    echo  [OK] Auto-Sync Service removed successfully!
     echo ======================================================================
 ) else (
     echo.
-    echo ℹ️ المهمة ليست مثبتة بالفعل أو تم حذفها مسبقاً.
+    echo  [i] Task is not currently installed or already removed.
 )
 
 echo.
