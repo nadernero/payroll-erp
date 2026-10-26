@@ -129,6 +129,8 @@ export async function pullFromSupabase(sqliteDb, tableList = null) {
           for (const row of res.rows) {
             const values = cols.map(c => {
               const val = row[c];
+              if (val === undefined || val === null) return null;
+              if (typeof val === 'boolean') return val ? 1 : 0;
               if (val instanceof Date) return val.toISOString();
               return val;
             });
@@ -167,6 +169,8 @@ export async function pullFreshAttendance(sqliteDb) {
         for (const row of res.rows) {
           const values = cols.map(c => {
             const val = row[c];
+            if (val === undefined || val === null) return null;
+            if (typeof val === 'boolean') return val ? 1 : 0;
             if (val instanceof Date) return val.toISOString();
             return val;
           });

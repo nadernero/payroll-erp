@@ -73,12 +73,58 @@ if (!isNative) {
           db.exec('COMMIT');
           return res;
         } catch (err) {
-          db.exec('ROLLBACK');
+          try { db.exec('ROLLBACK'); } catch (rbErr) {}
           throw err;
         }
       };
     };
   }
+
+  // Intercept prepare to sanitize parameters for node:sqlite compatibility (prevents undefined / boolean crashes)
+  const originalPrepare = db.prepare.bind(db);
+  function sanitizeParam(val) {
+    if (val === undefined || val === null) return null;
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    if (val instanceof Date) return val.toISOString();
+    return val;
+  }
+  function sanitizeObj(obj) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj) || obj instanceof Date) {
+      return sanitizeParam(obj);
+    }
+    const clean = {};
+    for (const k of Object.keys(obj)) {
+      clean[k] = sanitizeParam(obj[k]);
+    }
+    return clean;
+  }
+
+  db.prepare = (sql) => {
+    const stmt = originalPrepare(sql);
+    const origRun = stmt.run.bind(stmt);
+    const origGet = stmt.get.bind(stmt);
+    const origAll = stmt.all.bind(stmt);
+    stmt.run = (...args) => {
+      const cleanArgs = args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])
+        ? [sanitizeObj(args[0])]
+        : args.map(sanitizeParam);
+      return origRun(...cleanArgs);
+    };
+    stmt.get = (...args) => {
+      const cleanArgs = args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])
+        ? [sanitizeObj(args[0])]
+        : args.map(sanitizeParam);
+      return origGet(...cleanArgs);
+    };
+    stmt.all = (...args) => {
+      const cleanArgs = args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])
+        ? [sanitizeObj(args[0])]
+        : args.map(sanitizeParam);
+      return origAll(...cleanArgs);
+    };
+    return stmt;
+  };
+
   db.pragma('foreign_keys = ON');
 }
 
