@@ -14,7 +14,7 @@ if (dbUrl) {
     ssl: { rejectUnauthorized: false },
     max: 3,
     idleTimeoutMillis: 2000,
-    connectionTimeoutMillis: 4000
+    connectionTimeoutMillis: 12000
   });
 }
 
