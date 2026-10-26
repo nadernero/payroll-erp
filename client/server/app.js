@@ -84,6 +84,22 @@ if (!fs.existsSync(treasuryUploadsDir)) {
 }
 app.use('/uploads', express.static(uploadsDir));
 
+// On Vercel, guarantee all data served on GET is fresh from Supabase with 15s TTL
+if (process.env.VERCEL) {
+  app.use(async (req, res, next) => {
+    if (req.method === 'GET') {
+      try {
+        const { ensureRouteTablesFresh } = await import('./supabaseSync.js');
+        const targetUrl = req.originalUrl || req.url || req.path || '';
+        await ensureRouteTablesFresh(db, targetUrl);
+      } catch (syncErr) {
+        console.warn('[Vercel Route Sync Notice]:', syncErr.message);
+      }
+    }
+    next();
+  });
+}
+
 // API Routes (Mounted under both /api/* and /* for full compatibility with Vercel serverless rewrites)
 const routes = [
   ['/employees', employeesRouter],

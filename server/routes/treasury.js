@@ -67,7 +67,7 @@ router.get('/safes', (req, res) => {
 });
 
 // POST /api/treasury/safes
-router.post('/safes', (req, res) => {
+router.post('/safes', async (req, res) => {
   try {
     const { name, type, parent_safe_id, custodian_name, custodian_phone,
             custodian_employee_id, notes, is_trust, safe_category } = req.body;
@@ -87,13 +87,13 @@ router.post('/safes', (req, res) => {
            is_trust ? 1 : 0, safe_category || (is_trust ? 'trust' : 'standard'));
 
     const safe = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(result.lastInsertRowid);
-    pushToSupabase('cash_safes', safe);
+    await pushToSupabase('cash_safes', safe);
     res.status(201).json({ success: true, data: safe });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // PUT /api/treasury/safes/:id
-router.put('/safes/:id', (req, res) => {
+router.put('/safes/:id', async (req, res) => {
   try {
     const { name, custodian_name, custodian_phone, custodian_employee_id, notes, is_active, is_trust, safe_category } = req.body;
     const existing = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(req.params.id);
@@ -118,7 +118,7 @@ router.put('/safes/:id', (req, res) => {
            req.params.id);
 
     const updated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(req.params.id);
-    pushToSupabase('cash_safes', updated);
+    await pushToSupabase('cash_safes', updated);
     res.json({ success: true, data: updated });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -144,7 +144,7 @@ router.get('/parties', (req, res) => {
 });
 
 // POST /api/treasury/parties
-router.post('/parties', (req, res) => {
+router.post('/parties', async (req, res) => {
   try {
     const { name, party_type, category, contact_person, phone, tax_no, address, notes } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'اسم الجهة أو الشركة مطلوب' });
@@ -169,13 +169,13 @@ router.post('/parties', (req, res) => {
     );
 
     const party = db.prepare('SELECT * FROM treasury_parties WHERE id = ?').get(result.lastInsertRowid);
-    pushToSupabase('treasury_parties', party);
+    await pushToSupabase('treasury_parties', party);
     res.status(201).json({ success: true, data: party, message: 'تم تكويد الجهة / الشركة بنجاح' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // PUT /api/treasury/parties/:id
-router.put('/parties/:id', (req, res) => {
+router.put('/parties/:id', async (req, res) => {
   try {
     const { name, party_type, category, contact_person, phone, tax_no, address, notes, is_active } = req.body;
     const existing = db.prepare('SELECT * FROM treasury_parties WHERE id = ?').get(req.params.id);
@@ -200,23 +200,23 @@ router.put('/parties/:id', (req, res) => {
     );
 
     const updated = db.prepare('SELECT * FROM treasury_parties WHERE id = ?').get(req.params.id);
-    pushToSupabase('treasury_parties', updated);
+    await pushToSupabase('treasury_parties', updated);
     res.json({ success: true, data: updated, message: 'تم تحديث بيانات الجهة بنجاح' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // DELETE /api/treasury/parties/:id
-router.delete('/parties/:id', (req, res) => {
+router.delete('/parties/:id', async (req, res) => {
   try {
     const txCount = db.prepare('SELECT COUNT(*) as c FROM cash_transactions WHERE party_id = ?').get(req.params.id).c;
     if (txCount > 0) {
       db.prepare('UPDATE treasury_parties SET is_active = 0 WHERE id = ?').run(req.params.id);
       const updated = db.prepare('SELECT * FROM treasury_parties WHERE id = ?').get(req.params.id);
-      pushToSupabase('treasury_parties', updated);
+      await pushToSupabase('treasury_parties', updated);
       return res.json({ success: true, message: 'تم أرشفة وتعطيل الجهة لوجود حركات مالية مسجلة عليها' });
     }
     db.prepare('DELETE FROM treasury_parties WHERE id = ?').run(req.params.id);
-    deleteFromSupabase('treasury_parties', req.params.id);
+    await deleteFromSupabase('treasury_parties', req.params.id);
     res.json({ success: true, message: 'تم حذف الجهة بنجاح' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -436,7 +436,7 @@ router.get('/transactions', (req, res) => {
 });
 
 // POST /api/treasury/transactions  — main transaction endpoint
-router.post('/transactions', (req, res) => {
+router.post('/transactions', async (req, res) => {
   try {
     const {
       safe_id, type, amount, description, reference_no,
@@ -586,12 +586,12 @@ router.post('/transactions', (req, res) => {
     const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(txResult.txId);
     
     // Live push to Supabase
-    pushToSupabase('cash_transactions', tx);
+    await pushToSupabase('cash_transactions', tx);
     const safeUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
-    if (safeUpdated) pushToSupabase('cash_safes', safeUpdated);
+    if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
     if (related_safe_id) {
       const relUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(related_safe_id);
-      if (relUpdated) pushToSupabase('cash_safes', relUpdated);
+      if (relUpdated) await pushToSupabase('cash_safes', relUpdated);
     }
 
     res.status(201).json({
@@ -605,7 +605,7 @@ router.post('/transactions', (req, res) => {
 });
 
 // POST /api/treasury/disburse-employee — Single unified window for employee day 10 / 20 & loans
-router.post('/disburse-employee', (req, res) => {
+router.post('/disburse-employee', async (req, res) => {
   try {
     const {
       safe_id,
@@ -747,6 +747,15 @@ router.post('/disburse-employee', (req, res) => {
       return { txId: txRes.lastInsertRowid, denomId, newBalance, loanId, desc };
     })();
 
+    const safeUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
+    if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
+    const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(txResult.txId);
+    if (tx) await pushToSupabase('cash_transactions', tx);
+    if (txResult.loanId) {
+      const loan = db.prepare('SELECT * FROM loans WHERE id = ?').get(txResult.loanId);
+      if (loan) await pushToSupabase('loans', loan);
+    }
+
     res.status(201).json({
       success: true,
       message: 'تم تسجيل الصرف للموظف وتحديث الخزينة والدرج بنجاح',
@@ -756,7 +765,7 @@ router.post('/disburse-employee', (req, res) => {
 });
 
 // POST /api/treasury/disburse-mid-month — Disburse Day 10 / Day 20 expenses from safe directly
-router.post('/disburse-mid-month', (req, res) => {
+router.post('/disburse-mid-month', async (req, res) => {
   try {
     const { safe_id, year, month, day, items, transaction_date, courier_name, sender_phone, notes, denomination } = req.body;
     if (!safe_id || !year || !month || !day || !items || !Array.isArray(items)) {
@@ -878,6 +887,11 @@ router.post('/disburse-mid-month', (req, res) => {
       return { txId: txRes.lastInsertRowid, newBalance, denomId, totalAmount, count: validItems.length };
     })();
 
+    const safeUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
+    if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
+    const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(result.txId);
+    if (tx) await pushToSupabase('cash_transactions', tx);
+
     res.status(201).json({
       success: true,
       message: `تم صرف مصروفات يوم ${dayNum} لشهر ${month}/${year} لعدد (${result.count}) موظف بمبلغ ${result.totalAmount.toLocaleString('ar-EG')} ج.م وخصمها من الخزينة وربطها بالراتب بنجاح`,
@@ -888,7 +902,7 @@ router.post('/disburse-mid-month', (req, res) => {
 });
 
 // POST /api/treasury/disburse-loan — Disburse a loan to employee directly from safe
-router.post('/disburse-loan', (req, res) => {
+router.post('/disburse-loan', async (req, res) => {
   try {
     const { safe_id, employee_id, total_amount, months_count, start_date, transaction_date, courier_name, sender_phone, notes, denomination } = req.body;
 
@@ -993,6 +1007,15 @@ router.post('/disburse-loan', (req, res) => {
       };
     })();
 
+    const safeUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
+    if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
+    const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(result.txId);
+    if (tx) await pushToSupabase('cash_transactions', tx);
+    if (result.loanId) {
+      const loan = db.prepare('SELECT * FROM loans WHERE id = ?').get(result.loanId);
+      if (loan) await pushToSupabase('loans', loan);
+    }
+
     res.status(201).json({
       success: true,
       message: `تم صرف السلفة بمبلغ ${amount.toLocaleString('ar-EG')} ج.م للموظف ${emp.name} بنجاح وقيدها على أقساط شهرية تبدأ من ${start_date} حتى ${result.end_date}`,
@@ -1042,7 +1065,7 @@ router.post('/recalculate-all', (req, res) => {
 });
 
 // DELETE /api/treasury/transactions/:id — reverse/delete transaction with strict balance recomputation
-router.delete('/transactions/:id', (req, res) => {
+router.delete('/transactions/:id', async (req, res) => {
   try {
     const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(req.params.id);
     if (!tx) return res.status(404).json({ error: 'الحركة غير موجودة' });
@@ -1073,12 +1096,12 @@ router.delete('/transactions/:id', (req, res) => {
     })();
 
     // Real-time Supabase sync
-    deleteFromSupabase('cash_transactions', tx.id);
+    await deleteFromSupabase('cash_transactions', tx.id);
     const safeAfter = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safeId);
-    if (safeAfter) pushToSupabase('cash_safes', safeAfter);
+    if (safeAfter) await pushToSupabase('cash_safes', safeAfter);
     if (relSafeId) {
       const relSafeAfter = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(relSafeId);
-      if (relSafeAfter) pushToSupabase('cash_safes', relSafeAfter);
+      if (relSafeAfter) await pushToSupabase('cash_safes', relSafeAfter);
     }
 
     res.json({ success: true, message: 'تم حذف الحركة وإعادة تدقيق رصيد الخزينة بنجاح' });
@@ -1483,7 +1506,7 @@ router.post('/supabase-sync-now', async (req, res) => {
 });
 
 // POST /api/treasury/sub-safes/replenish (Dedicated sub-safe feeding from main safe)
-router.post('/sub-safes/replenish', (req, res) => {
+router.post('/sub-safes/replenish', async (req, res) => {
   try {
     const { main_safe_id, sub_safe_id, amount, date, notes } = req.body;
     const amt = parseFloat(amount);
@@ -1535,10 +1558,10 @@ router.post('/sub-safes/replenish', (req, res) => {
     const mainTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(mainTxId);
     const subTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(subTxId);
 
-    pushToSupabase('cash_safes', mainSafeAfter);
-    pushToSupabase('cash_safes', subSafeAfter);
-    pushToSupabase('cash_transactions', mainTx);
-    pushToSupabase('cash_transactions', subTx);
+    await pushToSupabase('cash_safes', mainSafeAfter);
+    await pushToSupabase('cash_safes', subSafeAfter);
+    await pushToSupabase('cash_transactions', mainTx);
+    await pushToSupabase('cash_transactions', subTx);
 
     res.json({
       success: true,
@@ -1605,7 +1628,7 @@ router.get('/trusts', (req, res) => {
 });
 
 // POST /api/treasury/trusts (Disburse trust / custody to an employee or external person)
-router.post('/trusts', (req, res) => {
+router.post('/trusts', async (req, res) => {
   try {
     const {
       safe_id, person_type, employee_id, person_name, person_phone, person_national_id,
@@ -1672,9 +1695,9 @@ router.post('/trusts', (req, res) => {
     const newTrust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
     const newTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(txId);
 
-    pushToSupabase('cash_safes', updatedSafe);
-    pushToSupabase('cash_trusts', newTrust);
-    pushToSupabase('cash_transactions', newTx);
+    await pushToSupabase('cash_safes', updatedSafe);
+    await pushToSupabase('cash_trusts', newTrust);
+    await pushToSupabase('cash_transactions', newTx);
 
     res.status(201).json({
       success: true,
@@ -1689,7 +1712,7 @@ router.post('/trusts', (req, res) => {
 });
 
 // POST /api/treasury/trusts/:id/return (Return trust amount & clear from person)
-router.post('/trusts/:id/return', (req, res) => {
+router.post('/trusts/:id/return', async (req, res) => {
   try {
     const trustId = req.params.id;
     const { return_safe_id, amount, return_date, notes } = req.body;
@@ -1755,9 +1778,9 @@ router.post('/trusts/:id/return', (req, res) => {
     const updatedTrust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
     const returnTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(returnTxId);
 
-    pushToSupabase('cash_safes', updatedSafe);
-    pushToSupabase('cash_trusts', updatedTrust);
-    pushToSupabase('cash_transactions', returnTx);
+    await pushToSupabase('cash_safes', updatedSafe);
+    await pushToSupabase('cash_trusts', updatedTrust);
+    await pushToSupabase('cash_transactions', returnTx);
 
     res.json({
       success: true,
@@ -1774,7 +1797,7 @@ router.post('/trusts/:id/return', (req, res) => {
 });
 
 // DELETE /api/treasury/trusts/:id (Cancel / Delete trust)
-router.delete('/trusts/:id', (req, res) => {
+router.delete('/trusts/:id', async (req, res) => {
   try {
     const trustId = req.params.id;
     const trust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
@@ -1787,19 +1810,19 @@ router.delete('/trusts/:id', (req, res) => {
         db.prepare('UPDATE cash_safes SET current_balance = current_balance + ? WHERE id = ?')
           .run(trust.amount, trust.safe_id);
         const safeAfter = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(trust.safe_id);
-        pushToSupabase('cash_safes', safeAfter);
+        if (safeAfter) await pushToSupabase('cash_safes', safeAfter);
       }
     }
 
     const disburseTxId = trust.disburse_tx_id;
     db.prepare('DELETE FROM cash_trust_returns WHERE trust_id = ?').run(trustId);
     db.prepare('DELETE FROM cash_trusts WHERE id = ?').run(trustId);
-    deleteFromSupabase('cash_trusts', trustId);
+    await deleteFromSupabase('cash_trusts', trustId);
 
     if (trust.returned_amount === 0 && disburseTxId) {
       try {
         db.prepare('DELETE FROM cash_transactions WHERE id = ?').run(disburseTxId);
-        deleteFromSupabase('cash_transactions', disburseTxId);
+        await deleteFromSupabase('cash_transactions', disburseTxId);
       } catch (e) {}
     }
 

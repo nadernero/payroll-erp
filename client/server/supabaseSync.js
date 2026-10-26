@@ -90,6 +90,7 @@ export async function pushToSupabase(table, row) {
 
   try {
     await pool.query(query, values);
+    invalidateTableCache(table);
     console.log(`⚡ [Supabase Realtime]: Synced [${table}] ID=${targetRow.id || targetRow.code || targetRow.date}`);
     return true;
   } catch (err) {
@@ -113,6 +114,7 @@ export async function deleteFromSupabase(table, idOrCondition) {
     } else {
       await pool.query(`DELETE FROM "${table}" WHERE id = $1`, [idOrCondition]);
     }
+    invalidateTableCache(table);
     console.log(`🗑️ [Supabase Realtime]: Deleted from [${table}]`);
     return true;
   } catch (err) {
@@ -121,8 +123,18 @@ export async function deleteFromSupabase(table, idOrCondition) {
   }
 }
 
+const tableLastPull = new Map();
+
+export function invalidateTableCache(table) {
+  if (table) {
+    tableLastPull.delete(table);
+  } else {
+    tableLastPull.clear();
+  }
+}
+
 /**
- * Pull all data from Supabase into local SQLite (e.g. on cold start in Vercel)
+ * Pull all data from Supabase into local SQLite with true 2-way sync (including deletions)
  */
 export async function pullFromSupabase(sqliteDb, tableList = null) {
   if (!pool) return { success: false, reason: 'No DB pool' };
@@ -143,14 +155,38 @@ export async function pullFromSupabase(sqliteDb, tableList = null) {
       'payroll_items',
       'salary_history',
       'cash_transactions',
+      'cash_trusts',
       'cash_denominations'
     ];
 
     for (const table of TABLES) {
       try {
         const res = await client.query(`SELECT * FROM "${table}"`);
-        if (!res.rows || res.rows.length === 0) continue;
+        
+        // 1. If remote table is empty, clear local SQLite table
+        if (!res.rows || res.rows.length === 0) {
+          if (table !== 'attendance') {
+            try { sqliteDb.prepare(`DELETE FROM "${table}"`).run(); } catch (e) {}
+          }
+          continue;
+        }
 
+        // 2. Delete rows in local SQLite that do NOT exist in Supabase (deletions sync)
+        if (table !== 'attendance') {
+          const remoteIds = new Set(res.rows.map(r => r.id));
+          try {
+            const localRows = sqliteDb.prepare(`SELECT id FROM "${table}"`).all();
+            sqliteDb.transaction(() => {
+              for (const lr of localRows) {
+                if (!remoteIds.has(lr.id)) {
+                  sqliteDb.prepare(`DELETE FROM "${table}" WHERE id = ?`).run(lr.id);
+                }
+              }
+            })();
+          } catch (delErr) {}
+        }
+
+        // 3. Insert or update all rows from Supabase into local SQLite
         const cols = Object.keys(res.rows[0]);
         const colList = cols.map(c => `"${c}"`).join(', ');
         const placeholders = cols.map(() => '?').join(', ');
@@ -168,7 +204,9 @@ export async function pullFromSupabase(sqliteDb, tableList = null) {
             stmt.run(...values);
           }
         })();
-      } catch (e) {}
+      } catch (e) {
+        console.warn(`[pullFromSupabase] Table ${table} sync warning:`, e.message);
+      }
     }
     client.release();
     console.log('✅ [Supabase Sync]: Pulled remote data into SQLite successfully');
@@ -180,7 +218,7 @@ export async function pullFromSupabase(sqliteDb, tableList = null) {
 }
 
 /**
- * Fast pull for recent / updated attendance from Supabase (under 500ms)
+ * Fast pull for recent / updated attendance from Supabase (under 500ms) with deletion sync
  */
 export async function pullFreshAttendance(sqliteDb) {
   if (!pool) return { success: false, reason: 'No DB pool' };
@@ -190,31 +228,119 @@ export async function pullFreshAttendance(sqliteDb) {
     const cutoffDate = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0];
     const res = await client.query('SELECT * FROM "attendance" WHERE date >= $1', [cutoffDate]);
 
-    if (res.rows && res.rows.length > 0) {
-      const cols = Object.keys(res.rows[0]);
-      const colList = cols.map(c => `"${c}"`).join(', ');
-      const placeholders = cols.map(() => '?').join(', ');
-      const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO attendance (${colList}) VALUES (${placeholders})`);
+    if (res.rows) {
+      // 1. Delete local attendance records in range that no longer exist in Supabase
+      const remoteKeys = new Set(res.rows.map(r => `${r.employee_code}_${r.date}`));
+      try {
+        const localAtt = sqliteDb.prepare('SELECT id, employee_code, date FROM attendance WHERE date >= ?').all(cutoffDate);
+        sqliteDb.transaction(() => {
+          for (const la of localAtt) {
+            if (!remoteKeys.has(`${la.employee_code}_${la.date}`)) {
+              sqliteDb.prepare('DELETE FROM attendance WHERE id = ?').run(la.id);
+            }
+          }
+        })();
+      } catch (attDelErr) {}
 
-      sqliteDb.transaction(() => {
-        for (const row of res.rows) {
-          const values = cols.map(c => {
-            const val = row[c];
-            if (val === undefined || val === null) return null;
-            if (typeof val === 'boolean') return val ? 1 : 0;
-            if (val instanceof Date) return val.toISOString();
-            return val;
-          });
-          stmt.run(...values);
-        }
-      })();
-      console.log(`⚡ [Supabase Fresh Pull]: Synchronized ${res.rows.length} attendance records`);
+      // 2. Insert or replace remote attendance
+      if (res.rows.length > 0) {
+        const cols = Object.keys(res.rows[0]);
+        const colList = cols.map(c => `"${c}"`).join(', ');
+        const placeholders = cols.map(() => '?').join(', ');
+        const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO attendance (${colList}) VALUES (${placeholders})`);
+
+        sqliteDb.transaction(() => {
+          for (const row of res.rows) {
+            const values = cols.map(c => {
+              const val = row[c];
+              if (val === undefined || val === null) return null;
+              if (typeof val === 'boolean') return val ? 1 : 0;
+              if (val instanceof Date) return val.toISOString();
+              return val;
+            });
+            stmt.run(...values);
+          }
+        })();
+        console.log(`⚡ [Supabase Fresh Pull]: Synchronized ${res.rows.length} attendance records`);
+      }
     }
     client.release();
     return { success: true, count: res.rows?.length || 0 };
   } catch (err) {
     console.error('⚠️ [pullFreshAttendance Error]:', err.message);
     return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Ensures a single table is freshly synchronized with a 15-second TTL cache
+ */
+export async function ensureTableFresh(sqliteDb, tableName, ttlMs = 15000) {
+  if (!process.env.VERCEL) return;
+  const now = Date.now();
+  const lastPull = tableLastPull.get(tableName) || 0;
+  if (now - lastPull > ttlMs) {
+    tableLastPull.set(tableName, now);
+    try {
+      if (tableName === 'attendance') {
+        await pullFreshAttendance(sqliteDb);
+      } else {
+        await pullFromSupabase(sqliteDb, [tableName]);
+      }
+    } catch (e) {
+      console.warn(`[ensureTableFresh] Warning syncing ${tableName}:`, e.message);
+    }
+  }
+}
+
+/**
+ * Auto-syncs all relevant tables for the incoming route path on Vercel
+ */
+export async function ensureRouteTablesFresh(sqliteDb, reqPath) {
+  if (!process.env.VERCEL || !reqPath) return;
+  const p = reqPath.toLowerCase();
+
+  const tablesToSync = new Set();
+  if (p.includes('employee')) tablesToSync.add('employees');
+  if (p.includes('attendance')) {
+    tablesToSync.add('attendance');
+    tablesToSync.add('employees');
+    tablesToSync.add('official_holidays');
+    tablesToSync.add('leaves');
+  }
+  if (p.includes('leave')) {
+    tablesToSync.add('leaves');
+    tablesToSync.add('employees');
+  }
+  if (p.includes('loan')) {
+    tablesToSync.add('loans');
+    tablesToSync.add('employees');
+  }
+  if (p.includes('expense')) {
+    tablesToSync.add('mid_month_expenses');
+    tablesToSync.add('employees');
+  }
+  if (p.includes('treasury')) {
+    tablesToSync.add('cash_safes');
+    tablesToSync.add('cash_trusts');
+    tablesToSync.add('cash_transactions');
+    tablesToSync.add('treasury_parties');
+    tablesToSync.add('employees');
+  }
+  if (p.includes('holiday')) tablesToSync.add('official_holidays');
+  if (p.includes('request')) {
+    tablesToSync.add('employee_requests');
+    tablesToSync.add('employees');
+  }
+  if (p.includes('biometric')) tablesToSync.add('biometric_devices');
+  if (p.includes('payroll')) {
+    tablesToSync.add('payroll_runs');
+    tablesToSync.add('payroll_items');
+    tablesToSync.add('employees');
+  }
+
+  for (const t of tablesToSync) {
+    await ensureTableFresh(sqliteDb, t, 15000);
   }
 }
 
