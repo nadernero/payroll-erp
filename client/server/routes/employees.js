@@ -8,8 +8,14 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. Get all employees
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureEmployeesFresh } = await import('../app.js');
+        if (ensureEmployeesFresh) await ensureEmployeesFresh();
+      } catch (e) {}
+    }
     const { department, search } = req.query;
     let query = 'SELECT * FROM employees WHERE 1=1';
     const params = [];
@@ -44,7 +50,7 @@ router.get('/:id', (req, res) => {
 });
 
 // 3. Create employee
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const {
       seq, department, name, code, national_id, insurance_no, job_title,

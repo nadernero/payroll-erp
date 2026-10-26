@@ -44,6 +44,21 @@ export async function ensureAttendanceFresh() {
   }
 }
 
+let lastEmployeesPull = 0;
+export async function ensureEmployeesFresh() {
+  if (!process.env.VERCEL) return;
+  const now = Date.now();
+  if (now - lastEmployeesPull > 30000) { // 30s TTL
+    lastEmployeesPull = now;
+    try {
+      const { pullFromSupabase } = await import('./supabaseSync.js');
+      await pullFromSupabase(db, ['employees']);
+    } catch (e) {
+      console.warn('Auto ensureEmployeesFresh warning:', e.message);
+    }
+  }
+}
+
 const app = express();
 
 // Prevent socket or ZKTeco communication timeouts from taking down the Node process

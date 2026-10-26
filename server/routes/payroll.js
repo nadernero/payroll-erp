@@ -65,7 +65,7 @@ router.get('/runs/:id', (req, res) => {
 });
 
 // 3. Generate or recalculate payroll run for a specific month
-router.post('/generate', (req, res) => {
+router.post('/generate', async (req, res) => {
   try {
     const { year, month } = req.body;
     if (!year || !month) {

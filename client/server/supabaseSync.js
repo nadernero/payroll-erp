@@ -46,19 +46,47 @@ export async function pushToSupabase(table, row) {
     }
   } catch (lookupErr) {}
 
+  let conflictTarget = '(id)';
+  let conflictCols = ['id'];
+  if (table === 'attendance') {
+    conflictTarget = '("employee_code", "date")';
+    conflictCols = ['employee_code', 'date'];
+  } else if (table === 'employees') {
+    conflictTarget = '("code")';
+    conflictCols = ['code'];
+  } else if (table === 'official_holidays') {
+    conflictTarget = '("holiday_date")';
+    conflictCols = ['holiday_date'];
+  } else if (table === 'payroll_runs') {
+    conflictTarget = '("year", "month")';
+    conflictCols = ['year', 'month'];
+  } else if (table === 'mid_month_expenses') {
+    conflictTarget = '("year", "month", "employee_id")';
+    conflictCols = ['year', 'month', 'employee_id'];
+  } else if (table === 'treasury_parties') {
+    conflictTarget = '("name")';
+    conflictCols = ['name'];
+  }
+
   const cols = Object.keys(targetRow);
   if (cols.length === 0) return false;
 
   const colList = cols.map(c => `"${c}"`).join(', ');
   const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-  const updateList = cols.filter(c => c !== 'id').map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+  const updateList = cols.filter(c => !conflictCols.includes(c) && c !== 'id').map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
   const values = cols.map(c => targetRow[c]);
 
-  const query = `
-    INSERT INTO "${table}" (${colList})
-    VALUES (${placeholders})
-    ON CONFLICT (id) DO UPDATE SET ${updateList}
-  `;
+  const query = updateList.length > 0
+    ? `
+      INSERT INTO "${table}" (${colList})
+      VALUES (${placeholders})
+      ON CONFLICT ${conflictTarget} DO UPDATE SET ${updateList}
+    `
+    : `
+      INSERT INTO "${table}" (${colList})
+      VALUES (${placeholders})
+      ON CONFLICT ${conflictTarget} DO NOTHING
+    `;
 
   try {
     await pool.query(query, values);
