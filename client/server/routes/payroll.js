@@ -7,8 +7,14 @@ import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, ensureFreshDat
 const router = express.Router();
 
 // 1. Get all payroll runs
-router.get('/runs', (req, res) => {
+router.get('/runs', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'payroll_runs', 5000);
+      } catch (e) {}
+    }
     const runs = db.prepare('SELECT * FROM payroll_runs ORDER BY year DESC, month DESC').all();
     res.json(runs);
   } catch (error) {
@@ -17,8 +23,15 @@ router.get('/runs', (req, res) => {
 });
 
 // 2. Get single payroll run with all itemized employee rows
-router.get('/runs/:id', (req, res) => {
+router.get('/runs/:id', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'payroll_runs', 5000);
+        await ensureTableFresh(db, 'payroll_items', 5000);
+      } catch (e) {}
+    }
     const run = db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(req.params.id);
     if (!run) return res.status(404).json({ error: 'كشف المرتبات غير موجود' });
 

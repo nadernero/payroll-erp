@@ -5,8 +5,14 @@ import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabase
 const router = express.Router();
 
 // 1. Get all loans
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'loans', 5000);
+      } catch (e) {}
+    }
     const { status, search } = req.query;
     let query = `
       SELECT l.*, e.department, e.job_title

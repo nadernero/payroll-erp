@@ -8,8 +8,14 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. Get expenses for specific month and year
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'mid_month_expenses', 5000);
+      } catch (e) {}
+    }
     const year = Number(req.query.year) || new Date().getFullYear();
     const month = Number(req.query.month) || (new Date().getMonth() + 1);
 

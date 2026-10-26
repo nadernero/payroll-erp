@@ -12,8 +12,8 @@ router.get('/', async (req, res) => {
   try {
     if (process.env.VERCEL) {
       try {
-        const { ensureEmployeesFresh } = await import('../app.js');
-        if (ensureEmployeesFresh) await ensureEmployeesFresh();
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'employees', 5000);
       } catch (e) {}
     }
     const { department, search } = req.query;
