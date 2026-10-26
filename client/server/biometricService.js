@@ -90,6 +90,7 @@ function parseTimeToDate(time) {
 }
 
 function decodeRecord40(buf) {
+  if (!buf || buf.length < 32) return null;
   const userSn = buf.readUInt16LE(0);
   const deviceUserId = buf.slice(2, 11).toString('ascii').replace(/\0/g, '').trim();
   const timeInt = buf.readUInt32LE(27);
