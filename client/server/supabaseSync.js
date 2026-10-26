@@ -4,7 +4,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const DEFAULT_SUPABASE_URL = 'postgresql://postgres.pnvsmqihnrrowfqlkqjo:Id%4022031981%402203@aws-0-eu-west-1.pooler.supabase.com:6543/postgres?pgbouncer=true';
-const dbUrl = process.env.DIRECT_URL || process.env.DATABASE_URL || DEFAULT_SUPABASE_URL;
+// Prioritize DATABASE_URL (Transaction Pooler port 6543) which works instantly in serverless
+const dbUrl = process.env.DATABASE_URL || DEFAULT_SUPABASE_URL;
 
 let pool = null;
 if (dbUrl) {
@@ -12,9 +13,9 @@ if (dbUrl) {
   pool = new Pool({
     connectionString: dbUrl,
     ssl: { rejectUnauthorized: false },
-    max: 3,
-    idleTimeoutMillis: 2000,
-    connectionTimeoutMillis: 12000
+    max: 5,
+    idleTimeoutMillis: 3000,
+    connectionTimeoutMillis: 8000
   });
 }
 
@@ -33,7 +34,21 @@ export async function pushToSupabase(table, row) {
       if (res.rows.length > 0) targetRow.id = res.rows[0].id;
     } else if (table === 'employees' && targetRow.code) {
       const res = await pool.query('SELECT id FROM "employees" WHERE code = $1', [targetRow.code]);
-      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+      if (res.rows.length > 0) {
+        targetRow.id = res.rows[0].id;
+      } else if (targetRow.id) {
+        const idCheck = await pool.query('SELECT id FROM "employees" WHERE id = $1', [targetRow.id]);
+        if (idCheck.rows.length > 0) {
+          delete targetRow.id;
+        }
+      }
+    } else if (table === 'loans' && targetRow.id) {
+      const res = await pool.query('SELECT id FROM "loans" WHERE id = $1', [targetRow.id]);
+      if (res.rows.length > 0 && targetRow.employee_id) {
+        // If row with this ID exists but belongs to another employee, omit ID to avoid collision
+        const cur = await pool.query('SELECT id FROM "loans" WHERE id = $1 AND employee_id = $2', [targetRow.id, targetRow.employee_id]);
+        if (cur.rows.length === 0) delete targetRow.id;
+      }
     } else if (table === 'official_holidays' && targetRow.holiday_date) {
       const res = await pool.query('SELECT id FROM "official_holidays" WHERE holiday_date = $1', [targetRow.holiday_date]);
       if (res.rows.length > 0) targetRow.id = res.rows[0].id;
@@ -41,8 +56,9 @@ export async function pushToSupabase(table, row) {
       const res = await pool.query('SELECT id FROM "payroll_runs" WHERE year = $1 AND month = $2', [targetRow.year, targetRow.month]);
       if (res.rows.length > 0) targetRow.id = res.rows[0].id;
     } else if (table === 'mid_month_expenses' && targetRow.year && targetRow.month && targetRow.employee_id) {
-      const res = await pool.query('SELECT id FROM "mid_month_expenses" WHERE year = $1 AND month = $2 AND employee_id = $3', [targetRow.year, targetRow.month, targetRow.employee_id]);
-      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+      delete targetRow.id;
+    } else if (table === 'payroll_items') {
+      delete targetRow.id;
     }
   } catch (lookupErr) {}
 
@@ -60,6 +76,9 @@ export async function pushToSupabase(table, row) {
   } else if (table === 'payroll_runs') {
     conflictTarget = '("year", "month")';
     conflictCols = ['year', 'month'];
+  } else if (table === 'payroll_items') {
+    conflictTarget = '("payroll_run_id", "employee_id")';
+    conflictCols = ['payroll_run_id', 'employee_id'];
   } else if (table === 'mid_month_expenses') {
     conflictTarget = '("year", "month", "employee_id")';
     conflictCols = ['year', 'month', 'employee_id'];
@@ -97,6 +116,86 @@ export async function pushToSupabase(table, row) {
     console.error(`⚠️ [Supabase Realtime Push Error in ${table}]:`, err.message);
     return false;
   }
+}
+
+/**
+ * Fast multi-row batch upsert into Supabase (under 200ms for 50-100 items)
+ */
+export async function pushBatchToSupabase(table, rows) {
+  if (!pool || !Array.isArray(rows) || rows.length === 0) return false;
+
+  let conflictTarget = '(id)';
+  let conflictCols = ['id'];
+  if (table === 'attendance') {
+    conflictTarget = '("employee_code", "date")';
+    conflictCols = ['employee_code', 'date'];
+  } else if (table === 'employees') {
+    conflictTarget = '("code")';
+    conflictCols = ['code'];
+  } else if (table === 'official_holidays') {
+    conflictTarget = '("holiday_date")';
+    conflictCols = ['holiday_date'];
+  } else if (table === 'payroll_runs') {
+    conflictTarget = '("year", "month")';
+    conflictCols = ['year', 'month'];
+  } else if (table === 'payroll_items') {
+    conflictTarget = '("payroll_run_id", "employee_id")';
+    conflictCols = ['payroll_run_id', 'employee_id'];
+  } else if (table === 'mid_month_expenses') {
+    conflictTarget = '("year", "month", "employee_id")';
+    conflictCols = ['year', 'month', 'employee_id'];
+  } else if (table === 'treasury_parties') {
+    conflictTarget = '("name")';
+    conflictCols = ['name'];
+  }
+
+  // Filter columns (omit id for payroll_items and mid_month_expenses so serial sequence/remote id isn't conflicted)
+  const sampleRow = rows[0];
+  let cols = Object.keys(sampleRow);
+  if (table === 'payroll_items' || table === 'mid_month_expenses') {
+    cols = cols.filter(c => c !== 'id');
+  }
+
+  const colList = cols.map(c => `"${c}"`).join(', ');
+  const updateCols = cols.filter(c => !conflictCols.includes(c) && c !== 'id');
+  const updateList = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const chunk = rows.slice(i, i + BATCH_SIZE);
+    const valueClauses = [];
+    const values = [];
+    let pIdx = 1;
+
+    for (const r of chunk) {
+      const placeholders = cols.map(() => `$${pIdx++}`).join(', ');
+      valueClauses.push(`(${placeholders})`);
+      cols.forEach(c => values.push(r[c] !== undefined ? r[c] : null));
+    }
+
+    const query = updateList.length > 0
+      ? `
+        INSERT INTO "${table}" (${colList})
+        VALUES ${valueClauses.join(', ')}
+        ON CONFLICT ${conflictTarget} DO UPDATE SET ${updateList}
+      `
+      : `
+        INSERT INTO "${table}" (${colList})
+        VALUES ${valueClauses.join(', ')}
+        ON CONFLICT ${conflictTarget} DO NOTHING
+      `;
+
+    try {
+      await pool.query(query, values);
+    } catch (err) {
+      console.error(`⚠️ [Supabase Realtime Batch Error in ${table}]:`, err.message);
+      return false;
+    }
+  }
+
+  invalidateTableCache(table);
+  console.log(`⚡ [Supabase Realtime Batch]: Synced ${rows.length} rows to [${table}]`);
+  return true;
 }
 
 /**

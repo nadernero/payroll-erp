@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import { pushToSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, pushBatchToSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -97,11 +97,13 @@ router.post('/save', async (req, res) => {
 
     runSave();
 
-    for (const item of items) {
-      try {
-        const saved = db.prepare('SELECT * FROM mid_month_expenses WHERE year = ? AND month = ? AND employee_id = ?').get(Number(year), Number(month), item.employee_id);
-        if (saved) await pushToSupabase('mid_month_expenses', saved);
-      } catch (e) {}
+    const savedRows = db.prepare('SELECT * FROM mid_month_expenses WHERE year = ? AND month = ?').all(Number(year), Number(month));
+    try {
+      if (savedRows.length > 0) {
+        await pushBatchToSupabase('mid_month_expenses', savedRows);
+      }
+    } catch (e) {
+      console.warn('Supabase expenses batch push notice:', e.message);
     }
 
     res.json({ success: true, message: 'تم حفظ المصروفات وربطها بالموظفين وتحديث الراتب بنجاح' });

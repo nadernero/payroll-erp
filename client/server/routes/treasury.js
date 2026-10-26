@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import db from '../db.js';
-import { pushToSupabase, deleteFromSupabase, getLiveSyncStatus, syncDatabase } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, getLiveSyncStatus, syncDatabase } from '../supabaseSync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -755,6 +755,12 @@ router.post('/disburse-employee', async (req, res) => {
       const loan = db.prepare('SELECT * FROM loans WHERE id = ?').get(txResult.loanId);
       if (loan) await pushToSupabase('loans', loan);
     }
+    if (disbursement_type === 'day_10' || disbursement_type === 'day_20') {
+      const curY = parseInt(year || new Date().getFullYear(), 10);
+      const curM = parseInt(month || (new Date().getMonth() + 1), 10);
+      const exp = db.prepare('SELECT * FROM mid_month_expenses WHERE year = ? AND month = ? AND employee_id = ?').get(curY, curM, emp.id);
+      if (exp) await pushToSupabase('mid_month_expenses', exp);
+    }
 
     res.status(201).json({
       success: true,
@@ -891,6 +897,10 @@ router.post('/disburse-mid-month', async (req, res) => {
     if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
     const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(result.txId);
     if (tx) await pushToSupabase('cash_transactions', tx);
+    const expRows = db.prepare('SELECT * FROM mid_month_expenses WHERE year = ? AND month = ?').all(parseInt(year, 10), parseInt(month, 10));
+    if (expRows.length > 0) {
+      await pushBatchToSupabase('mid_month_expenses', expRows);
+    }
 
     res.status(201).json({
       success: true,

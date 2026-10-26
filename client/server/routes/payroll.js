@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import * as XLSX from 'xlsx';
 import { calculatePayrollItem, calculateEgyptianTaxAnnual } from '../payrollService.js';
-import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
@@ -248,10 +248,10 @@ router.post('/generate', async (req, res) => {
       const savedRun = db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(run.id);
       if (savedRun) await pushToSupabase('payroll_runs', savedRun);
       const items = db.prepare('SELECT * FROM payroll_items WHERE payroll_run_id = ?').all(run.id);
-      for (const it of items) {
-        await pushToSupabase('payroll_items', it);
-      }
-    } catch (e) {}
+      await pushBatchToSupabase('payroll_items', items);
+    } catch (e) {
+      console.warn('Supabase payroll batch push notice:', e.message);
+    }
 
     res.json({ success: true, message: `تم احتساب كشف مرتبات ${monthTitle} بنجاح!`, runId: run.id });
   } catch (error) {
@@ -369,12 +369,10 @@ router.post('/runs/:id/bulk-bonus', async (req, res) => {
 
     updateTx();
 
-    for (const id of itemIds) {
-      try {
-        const it = db.prepare('SELECT * FROM payroll_items WHERE id = ?').get(id);
-        if (it) await pushToSupabase('payroll_items', it);
-      } catch (e) {}
-    }
+    const updatedItems = itemIds.map(id => db.prepare('SELECT * FROM payroll_items WHERE id = ?').get(id)).filter(Boolean);
+    try {
+      await pushBatchToSupabase('payroll_items', updatedItems);
+    } catch (e) {}
 
     res.json({
       success: true,
