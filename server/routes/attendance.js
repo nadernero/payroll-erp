@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import { pushToSupabase, deleteFromSupabase } from '../supabaseSync.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -70,7 +71,7 @@ router.get('/', async (req, res) => {
         e.annual_leave_balance,
         COALESCE(a.overtime_days, CASE WHEN a.overtime_hours > 0 THEN ROUND(a.overtime_hours / 8.0, 1) ELSE 0 END) as overtime_days_calculated
       FROM attendance a
-      JOIN employees e ON a.employee_id = e.id
+      LEFT JOIN employees e ON (a.employee_id = e.id OR a.employee_code = e.code)
       WHERE 1=1
     `;
     const params = [];
@@ -398,7 +399,7 @@ router.get('/summary', async (req, res) => {
 });
 
 // 3. Record / update single day attendance
-router.post('/record', (req, res) => {
+router.post('/record', async (req, res) => {
   try {
     const {
       employee_code, date, day_name, status, check_in, check_out,
@@ -473,6 +474,9 @@ router.post('/record', (req, res) => {
       notes: notes || ''
     });
 
+    const saved = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?').get(employee_code, date);
+    if (saved) await pushToSupabase('attendance', saved);
+
     res.json({ success: true, message: 'تم حفظ تسجيل حركة الحضور بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -480,7 +484,7 @@ router.post('/record', (req, res) => {
 });
 
 // 4. Update specific attendance record by ID
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const {
       status, check_in, check_out, late_minutes,
@@ -529,6 +533,9 @@ router.put('/:id', (req, res) => {
       req.params.id
     );
 
+    const saved = db.prepare('SELECT * FROM attendance WHERE id = ?').get(req.params.id);
+    if (saved) await pushToSupabase('attendance', saved);
+
     res.json({ success: true, message: 'تم تحديث سجل الحضور بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -536,7 +543,7 @@ router.put('/:id', (req, res) => {
 });
 
 // 4.1 Quick decision on missing/unexcused or weekly-off days (Upsert)
-router.post('/quick-decision', (req, res) => {
+router.post('/quick-decision', async (req, res) => {
   try {
     const { employee_code, date, decisionType, notes } = req.body;
     if (!employee_code || !date || !decisionType) {
@@ -612,6 +619,9 @@ router.post('/quick-decision', (req, res) => {
       notes: notes || ''
     });
 
+    const saved = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?').get(emp.code, date);
+    if (saved) await pushToSupabase('attendance', saved);
+
     res.json({
       success: true,
       message: `تم اعتماد اليوم (${date} - ${dayName}) كـ [${status}] للموظف ${emp.name} بنجاح`
@@ -622,7 +632,7 @@ router.post('/quick-decision', (req, res) => {
 });
 
 // 5. Bulk assign overtime days to multiple attendance records or employees
-router.post('/bulk-overtime', (req, res) => {
+router.post('/bulk-overtime', async (req, res) => {
   try {
     const { recordIds, overtime_days = 1.0, notes } = req.body;
     if (!recordIds || !Array.isArray(recordIds) || recordIds.length === 0) {
@@ -648,6 +658,13 @@ router.post('/bulk-overtime', (req, res) => {
 
     updateTransaction();
 
+    for (const id of recordIds) {
+      try {
+        const saved = db.prepare('SELECT * FROM attendance WHERE id = ?').get(id);
+        if (saved) await pushToSupabase('attendance', saved);
+      } catch (e) {}
+    }
+
     res.json({
       success: true,
       message: `تم تسجيل إضافي (${otDays} يوم) لعدد ${recordIds.length} موظف بنجاح`
@@ -658,7 +675,7 @@ router.post('/bulk-overtime', (req, res) => {
 });
 
 // 6. Bulk assign absence days (0.5 or 1 or custom) to multiple records
-router.post('/bulk-absence', (req, res) => {
+router.post('/bulk-absence', async (req, res) => {
   try {
     const { recordIds, absence_days = 1.0, notes } = req.body;
     if (!recordIds || !Array.isArray(recordIds) || recordIds.length === 0) {
@@ -686,6 +703,13 @@ router.post('/bulk-absence', (req, res) => {
     });
 
     updateTransaction();
+
+    for (const id of recordIds) {
+      try {
+        const saved = db.prepare('SELECT * FROM attendance WHERE id = ?').get(id);
+        if (saved) await pushToSupabase('attendance', saved);
+      } catch (e) {}
+    }
 
     res.json({
       success: true,

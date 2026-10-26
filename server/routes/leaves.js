@@ -1,11 +1,15 @@
 import express from 'express';
 import db from '../db.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
 // 1. Get leaves list
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try { await ensureFreshData(db); } catch (e) {}
+    }
     const { employeeId, year } = req.query;
     let query = `
       SELECT l.*, e.department, e.job_title, e.annual_leave_balance
@@ -65,7 +69,7 @@ router.get('/balances', (req, res) => {
 });
 
 // 3. Record an approved leave
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { employee_id, leave_type, start_date, end_date, days_count, reason } = req.body;
 
@@ -102,6 +106,9 @@ router.post('/', (req, res) => {
     });
 
     const newLeave = db.prepare('SELECT * FROM leaves WHERE id = ?').get(result.lastInsertRowid);
+    if (newLeave) {
+      try { await pushToSupabase('leaves', newLeave); } catch (e) {}
+    }
     res.status(201).json(newLeave);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -109,7 +116,7 @@ router.post('/', (req, res) => {
 });
 
 // 4. Update an existing leave record
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { leave_type, start_date, end_date, days_count, reason, status } = req.body;
     const leave = db.prepare('SELECT * FROM leaves WHERE id = ?').get(req.params.id);
@@ -135,6 +142,9 @@ router.put('/:id', (req, res) => {
     );
 
     const updated = db.prepare('SELECT * FROM leaves WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('leaves', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -142,7 +152,7 @@ router.put('/:id', (req, res) => {
 });
 
 // 5. Update employee's total annual leave balance
-router.put('/balances/:employeeId', (req, res) => {
+router.put('/balances/:employeeId', async (req, res) => {
   try {
     const { annual_leave_balance } = req.body;
     if (annual_leave_balance === undefined) {
@@ -152,6 +162,11 @@ router.put('/balances/:employeeId', (req, res) => {
     db.prepare('UPDATE employees SET annual_leave_balance = ? WHERE id = ?')
       .run(Number(annual_leave_balance), req.params.employeeId);
 
+    const updatedEmp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.employeeId);
+    if (updatedEmp) {
+      try { await pushToSupabase('employees', updatedEmp); } catch (e) {}
+    }
+
     res.json({ success: true, message: 'تم تحديث رصيد الإجازات السنوية للموظف' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -159,9 +174,10 @@ router.put('/balances/:employeeId', (req, res) => {
 });
 
 // 6. Delete a leave
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     db.prepare('DELETE FROM leaves WHERE id = ?').run(req.params.id);
+    try { await deleteFromSupabase('leaves', req.params.id); } catch (e) {}
     res.json({ success: true, message: 'تم حذف الإجازة وإعادة الرصيد' });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -1,11 +1,15 @@
 import express from 'express';
 import db from '../db.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
 // 1. Get all requests
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try { await ensureFreshData(db); } catch (e) {}
+    }
     const { status, type } = req.query;
     let query = `
       SELECT r.*, e.department, e.job_title
@@ -33,7 +37,7 @@ router.get('/', (req, res) => {
 });
 
 // 2. Warehouse Manager Action (approve to advance to admin, or reject)
-router.put('/:id/manager-action', (req, res) => {
+router.put('/:id/manager-action', async (req, res) => {
   try {
     const { action, manager_notes } = req.body;
     if (!['approved', 'rejected'].includes(action)) {
@@ -54,6 +58,9 @@ router.put('/:id/manager-action', (req, res) => {
     `).run(action, manager_notes || '', newStatus, req.params.id);
 
     const updated = db.prepare('SELECT * FROM employee_requests WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('employee_requests', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -61,7 +68,7 @@ router.put('/:id/manager-action', (req, res) => {
 });
 
 // 2.1. Submit Request on Behalf of Driver/Worker by Warehouse Manager
-router.post('/on-behalf', (req, res) => {
+router.post('/on-behalf', async (req, res) => {
   try {
     const { employee_id, request_type, title, date_from, date_to, quantity, details } = req.body;
 
@@ -129,6 +136,9 @@ router.post('/on-behalf', (req, res) => {
     });
 
     const newReq = db.prepare('SELECT * FROM employee_requests WHERE id = ?').get(result.lastInsertRowid);
+    if (newReq) {
+      try { await pushToSupabase('employee_requests', newReq); } catch (e) {}
+    }
     res.status(201).json(newReq);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -136,7 +146,7 @@ router.post('/on-behalf', (req, res) => {
 });
 
 // 3. Admin Final Approve or Reject a request
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { status, admin_response } = req.body;
     if (!status || !['approved', 'rejected'].includes(status)) {
@@ -259,6 +269,9 @@ router.put('/:id', (req, res) => {
     updateTx();
 
     const updated = db.prepare('SELECT * FROM employee_requests WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('employee_requests', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -33,6 +33,14 @@ async function main() {
   log('   🚀 محرك المزامنة الآلي الشامل لماكينات البصمة (الداخلية والخارجية)');
   log('========================================================================\n');
 
+  // Pre-sync: pull latest employees and biometric devices from cloud to guarantee fresh local state
+  try {
+    const { pullFromSupabase } = await import('../server/supabaseSync.js');
+    await pullFromSupabase(db, ['employees', 'biometric_devices']);
+  } catch (pullErr) {
+    // Continue with local cache if remote pull fails
+  }
+
   // Fetch all active biometric devices
   const devices = db.prepare("SELECT * FROM biometric_devices WHERE status = 'active' ORDER BY id ASC").all();
 

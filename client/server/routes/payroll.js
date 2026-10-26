@@ -2,12 +2,16 @@ import express from 'express';
 import db from '../db.js';
 import * as XLSX from 'xlsx';
 import { calculatePayrollItem, calculateEgyptianTaxAnnual } from '../payrollService.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
 // 1. Get all payroll runs
-router.get('/runs', (req, res) => {
+router.get('/runs', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try { await ensureFreshData(db); } catch (e) {}
+    }
     const runs = db.prepare('SELECT * FROM payroll_runs ORDER BY year DESC, month DESC').all();
     res.json(runs);
   } catch (error) {
@@ -243,6 +247,15 @@ router.post('/generate', (req, res) => {
 
     insertTransaction();
 
+    try {
+      const savedRun = db.prepare('SELECT * FROM payroll_runs WHERE id = ?').get(run.id);
+      if (savedRun) await pushToSupabase('payroll_runs', savedRun);
+      const items = db.prepare('SELECT * FROM payroll_items WHERE payroll_run_id = ?').all(run.id);
+      for (const it of items) {
+        await pushToSupabase('payroll_items', it);
+      }
+    } catch (e) {}
+
     res.json({ success: true, message: `تم احتساب كشف مرتبات ${monthTitle} بنجاح!`, runId: run.id });
   } catch (error) {
     console.error('Payroll generation error:', error);
@@ -251,7 +264,7 @@ router.post('/generate', (req, res) => {
 });
 
 // 4. Update individual payroll item (manual override by HR/Accountant)
-router.put('/items/:id', (req, res) => {
+router.put('/items/:id', async (req, res) => {
   try {
     const item = db.prepare('SELECT * FROM payroll_items WHERE id = ?').get(req.params.id);
     if (!item) return res.status(404).json({ error: 'بند المرتب غير موجود' });
@@ -311,6 +324,9 @@ router.put('/items/:id', (req, res) => {
     });
 
     const updated = db.prepare('SELECT * FROM payroll_items WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('payroll_items', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -318,7 +334,7 @@ router.put('/items/:id', (req, res) => {
 });
 
 // 4.1. Bulk Grant Named Tax-Exempt Bonus to Selected Employees
-router.post('/runs/:id/bulk-bonus', (req, res) => {
+router.post('/runs/:id/bulk-bonus', async (req, res) => {
   try {
     const { itemIds, bonusName, amount } = req.body;
     if (!Array.isArray(itemIds) || itemIds.length === 0) {
@@ -355,6 +371,13 @@ router.post('/runs/:id/bulk-bonus', (req, res) => {
     });
 
     updateTx();
+
+    for (const id of itemIds) {
+      try {
+        const it = db.prepare('SELECT * FROM payroll_items WHERE id = ?').get(id);
+        if (it) await pushToSupabase('payroll_items', it);
+      } catch (e) {}
+    }
 
     res.json({
       success: true,

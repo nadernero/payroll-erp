@@ -2,13 +2,17 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. Get all employees
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try { await ensureFreshData(db); } catch (e) {}
+    }
     const { department, search } = req.query;
     let query = 'SELECT * FROM employees WHERE 1=1';
     const params = [];
@@ -100,6 +104,11 @@ router.post('/', (req, res) => {
     });
 
     const newEmp = db.prepare('SELECT * FROM employees WHERE id = ?').get(result.lastInsertRowid);
+    try {
+      await pushToSupabase('employees', newEmp);
+    } catch (pushErr) {
+      console.error('Supabase push error (create employee):', pushErr.message);
+    }
     res.status(201).json(newEmp);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -107,7 +116,7 @@ router.post('/', (req, res) => {
 });
 
 // 4. Update employee
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const {
       seq, department, name, code, national_id, insurance_no, job_title,
@@ -170,6 +179,11 @@ router.put('/:id', (req, res) => {
     });
 
     const updated = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    try {
+      await pushToSupabase('employees', updated);
+    } catch (pushErr) {
+      console.error('Supabase push error (update employee):', pushErr.message);
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -177,12 +191,14 @@ router.put('/:id', (req, res) => {
 });
 
 // 4.1 Reset PIN for employee
-router.post('/:id/reset-pin', (req, res) => {
+router.post('/:id/reset-pin', async (req, res) => {
   try {
     const emp = db.prepare('SELECT id, name, code FROM employees WHERE id = ?').get(req.params.id);
     if (!emp) return res.status(404).json({ error: 'الموظف غير موجود' });
 
     db.prepare('UPDATE employees SET pin_code = NULL WHERE id = ?').run(req.params.id);
+    const updated = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (updated) await pushToSupabase('employees', updated);
     res.json({
       success: true,
       message: `تم تصفير رمز المرور PIN للموظف ${emp.name} (${emp.code}) بنجاح. سيطلب منه النظام إنشاء رمز سري جديد عند تسجيل الدخول القادم.`
@@ -193,13 +209,15 @@ router.post('/:id/reset-pin', (req, res) => {
 });
 
 // 4.2 Set PIN directly by admin
-router.post('/:id/set-pin', (req, res) => {
+router.post('/:id/set-pin', async (req, res) => {
   try {
     const { pin_code } = req.body;
     if (!pin_code || String(pin_code).trim().length < 4) {
       return res.status(400).json({ error: 'رمز الـ PIN يجب أن يكون من 4 أرقام على الأقل' });
     }
     db.prepare('UPDATE employees SET pin_code = ? WHERE id = ?').run(String(pin_code).trim(), req.params.id);
+    const updated = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.id);
+    if (updated) await pushToSupabase('employees', updated);
     res.json({ success: true, message: 'تم تعيين رمز الـ PIN بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -207,9 +225,12 @@ router.post('/:id/set-pin', (req, res) => {
 });
 
 // 5. Delete employee
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     db.prepare('DELETE FROM employees WHERE id = ?').run(req.params.id);
+    try {
+      await deleteFromSupabase('employees', req.params.id);
+    } catch (e) {}
     res.json({ success: true, message: 'تم حذف الموظف بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -217,7 +238,7 @@ router.delete('/:id', (req, res) => {
 });
 
 // 5.1 Bulk Delete employees
-router.post('/bulk-delete', (req, res) => {
+router.post('/bulk-delete', async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -232,6 +253,9 @@ router.post('/bulk-delete', (req, res) => {
     });
 
     runBulk();
+    for (const id of ids) {
+      try { await deleteFromSupabase('employees', id); } catch (e) {}
+    }
     res.json({ success: true, message: `تم حذف ${ids.length} موظف بنجاح` });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -403,7 +427,7 @@ router.post('/import/preview', upload.single('file'), (req, res) => {
 });
 
 // 8. Confirm Excel Import
-router.post('/import/confirm', (req, res) => {
+router.post('/import/confirm', async (req, res) => {
   try {
     const { items } = req.body;
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -476,6 +500,16 @@ router.post('/import/confirm', (req, res) => {
     });
 
     runImport();
+
+    // Push imported employees to Supabase
+    try {
+      const allCurrent = db.prepare('SELECT * FROM employees').all();
+      for (const item of items) {
+        if (!item.code) continue;
+        const matched = allCurrent.find(e => String(e.code).trim() === String(item.code).trim());
+        if (matched) await pushToSupabase('employees', matched);
+      }
+    } catch (pushErr) {}
 
     res.json({
       success: true,

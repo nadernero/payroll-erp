@@ -21,13 +21,35 @@ if (dbUrl) {
 export async function pushToSupabase(table, row) {
   if (!pool || !row || typeof row !== 'object') return false;
 
-  const cols = Object.keys(row);
+  const targetRow = { ...row };
+
+  // Resolve remote ID if a natural unique key exists to avoid unique constraint collisions
+  try {
+    if (table === 'attendance' && targetRow.employee_code && targetRow.date) {
+      const res = await pool.query('SELECT id FROM "attendance" WHERE employee_code = $1 AND date = $2', [targetRow.employee_code, targetRow.date]);
+      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+    } else if (table === 'employees' && targetRow.code) {
+      const res = await pool.query('SELECT id FROM "employees" WHERE code = $1', [targetRow.code]);
+      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+    } else if (table === 'official_holidays' && targetRow.holiday_date) {
+      const res = await pool.query('SELECT id FROM "official_holidays" WHERE holiday_date = $1', [targetRow.holiday_date]);
+      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+    } else if (table === 'payroll_runs' && targetRow.year && targetRow.month) {
+      const res = await pool.query('SELECT id FROM "payroll_runs" WHERE year = $1 AND month = $2', [targetRow.year, targetRow.month]);
+      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+    } else if (table === 'mid_month_expenses' && targetRow.year && targetRow.month && targetRow.employee_id) {
+      const res = await pool.query('SELECT id FROM "mid_month_expenses" WHERE year = $1 AND month = $2 AND employee_id = $3', [targetRow.year, targetRow.month, targetRow.employee_id]);
+      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+    }
+  } catch (lookupErr) {}
+
+  const cols = Object.keys(targetRow);
   if (cols.length === 0) return false;
 
   const colList = cols.map(c => `"${c}"`).join(', ');
   const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
   const updateList = cols.filter(c => c !== 'id').map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
-  const values = cols.map(c => row[c]);
+  const values = cols.map(c => targetRow[c]);
 
   const query = `
     INSERT INTO "${table}" (${colList})
@@ -37,7 +59,7 @@ export async function pushToSupabase(table, row) {
 
   try {
     await pool.query(query, values);
-    console.log(`⚡ [Supabase Realtime]: Synced [${table}] ID=${row.id}`);
+    console.log(`⚡ [Supabase Realtime]: Synced [${table}] ID=${targetRow.id || targetRow.code || targetRow.date}`);
     return true;
   } catch (err) {
     console.error(`⚠️ [Supabase Realtime Push Error in ${table}]:`, err.message);
@@ -48,12 +70,19 @@ export async function pushToSupabase(table, row) {
 /**
  * Delete a record from Supabase immediately in real-time
  */
-export async function deleteFromSupabase(table, id) {
-  if (!pool || !id) return false;
+export async function deleteFromSupabase(table, idOrCondition) {
+  if (!pool || !idOrCondition) return false;
 
   try {
-    const res = await pool.query(`DELETE FROM "${table}" WHERE id = $1`, [id]);
-    console.log(`🗑️ [Supabase Realtime]: Deleted from [${table}] ID=${id} (affected: ${res.rowCount})`);
+    if (typeof idOrCondition === 'object') {
+      const keys = Object.keys(idOrCondition);
+      const whereClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(' AND ');
+      const values = keys.map(k => idOrCondition[k]);
+      await pool.query(`DELETE FROM "${table}" WHERE ${whereClause}`, values);
+    } else {
+      await pool.query(`DELETE FROM "${table}" WHERE id = $1`, [idOrCondition]);
+    }
+    console.log(`🗑️ [Supabase Realtime]: Deleted from [${table}]`);
     return true;
   } catch (err) {
     console.error(`⚠️ [Supabase Realtime Delete Error in ${table}]:`, err.message);
@@ -154,6 +183,37 @@ export async function pullFreshAttendance(sqliteDb) {
   }
 }
 
+let lastDataPull = 0;
+/**
+ * Ensures all core operational tables are synchronized from Supabase on Vercel
+ */
+export async function ensureFreshData(sqliteDb, force = false) {
+  if (!process.env.VERCEL && !force) return { success: true, skipped: true };
+  const now = Date.now();
+  if (now - lastDataPull > 20000 || force) { // 20s TTL
+    lastDataPull = now;
+    try {
+      // 1. Pull core metadata tables
+      await pullFromSupabase(sqliteDb, [
+        'employees',
+        'biometric_devices',
+        'official_holidays',
+        'loans',
+        'leaves',
+        'mid_month_expenses',
+        'employee_requests'
+      ]);
+      // 2. Pull fresh attendance for last 45 days
+      await pullFreshAttendance(sqliteDb);
+      return { success: true };
+    } catch (e) {
+      console.warn('⚠️ ensureFreshData warning:', e.message);
+      return { success: false, error: e.message };
+    }
+  }
+  return { success: true, cached: true };
+}
+
 /**
  * Full table sync from local SQLite to Supabase
  */
@@ -185,6 +245,7 @@ export async function syncDatabase(sqliteDb) {
     client = await pool.connect();
 
     for (const table of TABLES) {
+      console.log(`[syncDatabase] Processing table: ${table}...`);
       // 1. Fetch local rows
       let localRows = [];
       try {
@@ -205,13 +266,43 @@ export async function syncDatabase(sqliteDb) {
       const remoteIds = new Set(remoteRows.map(r => r.id));
 
       // 3. Push missing or updated rows from local to remote in high-speed batches
-      const rowsToInsert = localRows.filter(r => !remoteIds.has(r.id));
-      if (rowsToInsert.length > 0) {
-        const cols = Object.keys(rowsToInsert[0]);
-        const colList = cols.map(c => `"${c}"`).join(', ');
-        const updateList = cols.filter(c => c !== 'id').map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+      let rowsToInsert;
+      if (table === 'attendance') {
+        const cutoff = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+        // Recent attendance records (last 7 days) + any historical rows missing from remote
+        rowsToInsert = localRows.filter(r => !remoteIds.has(r.id) || (r.date && r.date >= cutoff));
+      } else {
+        // For all other tables, upsert all local rows so any modifications/edits are propagated
+        rowsToInsert = localRows;
+      }
 
-        const BATCH_SIZE = 50;
+      if (rowsToInsert.length > 0) {
+        let cols = Object.keys(rowsToInsert[0]);
+        let conflictTarget = '(id)';
+        let updateCols = cols.filter(c => c !== 'id');
+
+        if (table === 'attendance') {
+          cols = cols.filter(c => c !== 'id');
+          conflictTarget = '("employee_code", "date")';
+          updateCols = cols.filter(c => c !== 'employee_code' && c !== 'date');
+        } else if (table === 'employees') {
+          conflictTarget = '("code")';
+          updateCols = cols.filter(c => c !== 'id' && c !== 'code');
+        } else if (table === 'official_holidays') {
+          conflictTarget = '("holiday_date")';
+          updateCols = cols.filter(c => c !== 'id' && c !== 'holiday_date');
+        } else if (table === 'payroll_runs') {
+          conflictTarget = '("year", "month")';
+          updateCols = cols.filter(c => c !== 'id' && c !== 'year' && c !== 'month');
+        } else if (table === 'mid_month_expenses') {
+          conflictTarget = '("year", "month", "employee_id")';
+          updateCols = cols.filter(c => c !== 'id' && c !== 'year' && c !== 'month' && c !== 'employee_id');
+        }
+
+        const colList = cols.map(c => `"${c}"`).join(', ');
+        const updateList = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+
+        const BATCH_SIZE = 100;
         for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
           const batch = rowsToInsert.slice(i, i + BATCH_SIZE);
           const valueClauses = [];
@@ -228,7 +319,7 @@ export async function syncDatabase(sqliteDb) {
             await client.query(`
               INSERT INTO "${table}" (${colList})
               VALUES ${valueClauses.join(', ')}
-              ON CONFLICT (id) DO UPDATE SET ${updateList}
+              ON CONFLICT ${conflictTarget} DO UPDATE SET ${updateList}
             `, values);
           } catch (batchErr) {
             // Fallback to row-by-row if any error occurs
@@ -238,7 +329,7 @@ export async function syncDatabase(sqliteDb) {
                 await client.query(`
                   INSERT INTO "${table}" (${colList})
                   VALUES (${singlePlaceholders})
-                  ON CONFLICT (id) DO UPDATE SET ${updateList}
+                  ON CONFLICT ${conflictTarget} DO UPDATE SET ${updateList}
                 `, cols.map(c => row[c]));
               } catch (e) {}
             }
@@ -251,16 +342,6 @@ export async function syncDatabase(sqliteDb) {
             SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) + 1 FROM "${table}"), 1), false);
           `);
         } catch {}
-      }
-
-      // 4. Delete remote rows that were deleted locally (only for tables where local is authoritative)
-      for (const rem of remoteRows) {
-        if (!localIds.has(rem.id)) {
-          console.log(`🧹 [Supabase Sync]: Removing deleted record from [${table}] ID=${rem.id}`);
-          try {
-            await client.query(`DELETE FROM "${table}" WHERE id = $1`, [rem.id]);
-          } catch (e) {}
-        }
       }
     }
 

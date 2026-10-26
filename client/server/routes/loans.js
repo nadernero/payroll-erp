@@ -1,11 +1,15 @@
 import express from 'express';
 import db from '../db.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
 // 1. Get all loans
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try { await ensureFreshData(db); } catch (e) {}
+    }
     const { status, search } = req.query;
     let query = `
       SELECT l.*, e.department, e.job_title
@@ -43,7 +47,7 @@ router.get('/employee/:employeeId', (req, res) => {
 });
 
 // 3. Create a new loan
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { employee_id, total_amount, months_count, start_date, notes } = req.body;
 
@@ -95,6 +99,9 @@ router.post('/', (req, res) => {
     });
 
     const newLoan = db.prepare('SELECT * FROM loans WHERE id = ?').get(result.lastInsertRowid);
+    if (newLoan) {
+      try { await pushToSupabase('loans', newLoan); } catch (e) {}
+    }
     res.status(201).json(newLoan);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -102,7 +109,7 @@ router.post('/', (req, res) => {
 });
 
 // 4. Update full loan details (editing and recording installments)
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { total_amount, months_count, start_date, paid_installments, status, notes } = req.body;
     const loan = db.prepare('SELECT * FROM loans WHERE id = ?').get(req.params.id);
@@ -153,6 +160,9 @@ router.put('/:id', (req, res) => {
     );
 
     const updated = db.prepare('SELECT * FROM loans WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('loans', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -160,9 +170,10 @@ router.put('/:id', (req, res) => {
 });
 
 // 5. Delete loan
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     db.prepare('DELETE FROM loans WHERE id = ?').run(req.params.id);
+    try { await deleteFromSupabase('loans', req.params.id); } catch (e) {}
     res.json({ success: true, message: 'تم حذف سجل السلفة بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });

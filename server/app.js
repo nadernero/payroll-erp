@@ -32,15 +32,11 @@ try {
 let lastAttendancePull = 0;
 export async function ensureAttendanceFresh() {
   if (!process.env.VERCEL) return;
-  const now = Date.now();
-  if (now - lastAttendancePull > 20000) { // 20s TTL
-    lastAttendancePull = now;
-    try {
-      const { pullFreshAttendance } = await import('./supabaseSync.js');
-      await pullFreshAttendance(db);
-    } catch (e) {
-      console.warn('Auto pullFreshAttendance warning:', e.message);
-    }
+  try {
+    const { ensureFreshData } = await import('./supabaseSync.js');
+    await ensureFreshData(db);
+  } catch (e) {
+    console.warn('Auto ensureFreshData warning:', e.message);
   }
 }
 
