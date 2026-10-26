@@ -55,8 +55,14 @@ export function formatDelayMinutes(val) {
 }
 
 // 1. Get attendance with filters and auto-linked leaves check, expanding calendar days so no day is missing
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureAttendanceFresh } = await import('../app.js');
+        if (ensureAttendanceFresh) await ensureAttendanceFresh();
+      } catch (e) {}
+    }
     const { year, month, startDate, endDate, employeeCode, department } = req.query;
     let query = `
       SELECT 
@@ -313,8 +319,14 @@ router.get('/', (req, res) => {
 });
 
 // 2. Get monthly attendance summary per employee (in days for payroll)
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureAttendanceFresh } = await import('../app.js');
+        if (ensureAttendanceFresh) await ensureAttendanceFresh();
+      } catch (e) {}
+    }
     const { year, month } = req.query;
     if (!year || !month) {
       return res.status(400).json({ error: 'السنة والشهر مطلوبان' });

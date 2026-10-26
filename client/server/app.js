@@ -25,19 +25,23 @@ const __dirname = path.dirname(__filename);
 // Initialize DB schema & seed data
 try {
   initDatabase();
-  // If running on Vercel and local table is empty, auto-pull from Supabase
-  if (process.env.VERCEL) {
-    try {
-      const cnt = db.prepare('SELECT count(*) as c FROM employees').get()?.c || 0;
-      if (cnt === 0) {
-        import('./supabaseSync.js').then(({ pullFromSupabase }) => {
-          pullFromSupabase(db);
-        });
-      }
-    } catch (e) {}
-  }
 } catch (e) {
   console.warn('initDatabase notice:', e.message);
+}
+
+let lastAttendancePull = 0;
+export async function ensureAttendanceFresh() {
+  if (!process.env.VERCEL) return;
+  const now = Date.now();
+  if (now - lastAttendancePull > 20000) { // 20s TTL
+    lastAttendancePull = now;
+    try {
+      const { pullFreshAttendance } = await import('./supabaseSync.js');
+      await pullFreshAttendance(db);
+    } catch (e) {
+      console.warn('Auto pullFreshAttendance warning:', e.message);
+    }
+  }
 }
 
 const app = express();
@@ -94,10 +98,22 @@ app.get(['/api/health', '/health'], (req, res) => {
   });
 });
 
-// Manual sync trigger
-app.post('/api/sync/trigger', async (req, res) => {
+// Manual sync trigger (Push from SQLite to Supabase)
+app.post(['/api/sync/trigger', '/sync/trigger'], async (req, res) => {
   try {
     const result = await syncDatabase(db);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual sync pull endpoint (from Supabase to SQLite)
+app.all(['/api/sync/pull', '/sync/pull'], async (req, res) => {
+  try {
+    const isFull = req.query.full === 'true';
+    const { pullFromSupabase, pullFreshAttendance } = await import('./supabaseSync.js');
+    const result = isFull ? await pullFromSupabase(db) : await pullFreshAttendance(db);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

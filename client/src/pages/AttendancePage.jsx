@@ -458,6 +458,28 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Refresh / Sync from Cloud */}
+          <button
+            onClick={async () => {
+              try {
+                setLoading(true);
+                await fetchJson('/sync/pull?full=false').catch(() => {});
+                await loadData();
+              } catch (e) {
+                console.error(e);
+                loadData();
+              } finally {
+                setLoading(false);
+              }
+            }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs md:text-sm font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-xl transition-all border border-blue-200"
+            title="تحديث وسحب أحدث البصمات من السحابة"
+          >
+            <RefreshCw className={`w-4 h-4 text-blue-600 ${loading ? 'animate-spin' : ''}`} />
+            تحديث البصمات
+          </button>
+
           {/* ZKTeco Link Button */}
           {setParentTab && (
             <button

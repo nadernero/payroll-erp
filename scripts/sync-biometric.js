@@ -146,6 +146,19 @@ async function main() {
     const syncRes = await syncDatabase(db);
     if (syncRes.success) {
       console.log(`⚡ تمت المزامنة السحابية بنجاح في ${syncRes.elapsedMs}ms!`);
+
+      // Notify Vercel server to pull immediately
+      try {
+        console.log('📡 جاري إشعار السيرفر السحابي (Vercel) لتحديث البصمات فوراً...');
+        await fetch('https://payroll-erp-rho.vercel.app/api/sync/pull', { 
+          method: 'POST',
+          signal: AbortSignal.timeout(8000)
+        });
+        console.log('✅ تم إشعار السيرفر السحابي بنجاح!');
+      } catch (notifyErr) {
+        // Non-blocking
+      }
+
       console.log('🌐 أصبحت بيانات الحضور متاحة الآن 24/7 على:');
       console.log('   - https://company-payroll-erp-2026.web.app');
       console.log('   - https://payroll-erp-rho.vercel.app');

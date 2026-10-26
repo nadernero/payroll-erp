@@ -64,11 +64,11 @@ export async function deleteFromSupabase(table, id) {
 /**
  * Pull all data from Supabase into local SQLite (e.g. on cold start in Vercel)
  */
-export async function pullFromSupabase(sqliteDb) {
+export async function pullFromSupabase(sqliteDb, tableList = null) {
   if (!pool) return { success: false, reason: 'No DB pool' };
   try {
     const client = await pool.connect();
-    const TABLES = [
+    const TABLES = tableList || [
       'treasury_parties',
       'cash_safes',
       'employees',
@@ -113,6 +113,43 @@ export async function pullFromSupabase(sqliteDb) {
     return { success: true };
   } catch (err) {
     console.error('⚠️ [Supabase Pull Error]:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Fast pull for recent / updated attendance from Supabase (under 500ms)
+ */
+export async function pullFreshAttendance(sqliteDb) {
+  if (!pool) return { success: false, reason: 'No DB pool' };
+  try {
+    const client = await pool.connect();
+    // Pull any attendance records from the last 45 days
+    const cutoffDate = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0];
+    const res = await client.query('SELECT * FROM "attendance" WHERE date >= $1', [cutoffDate]);
+
+    if (res.rows && res.rows.length > 0) {
+      const cols = Object.keys(res.rows[0]);
+      const colList = cols.map(c => `"${c}"`).join(', ');
+      const placeholders = cols.map(() => '?').join(', ');
+      const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO attendance (${colList}) VALUES (${placeholders})`);
+
+      sqliteDb.transaction(() => {
+        for (const row of res.rows) {
+          const values = cols.map(c => {
+            const val = row[c];
+            if (val instanceof Date) return val.toISOString();
+            return val;
+          });
+          stmt.run(...values);
+        }
+      })();
+      console.log(`⚡ [Supabase Fresh Pull]: Synchronized ${res.rows.length} attendance records`);
+    }
+    client.release();
+    return { success: true, count: res.rows?.length || 0 };
+  } catch (err) {
+    console.error('⚠️ [pullFreshAttendance Error]:', err.message);
     return { success: false, error: err.message };
   }
 }
