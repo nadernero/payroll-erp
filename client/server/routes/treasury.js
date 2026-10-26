@@ -1695,9 +1695,9 @@ router.post('/trusts', async (req, res) => {
     const newTrust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
     const newTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(txId);
 
+    await pushToSupabase('cash_transactions', newTx);
     await pushToSupabase('cash_safes', updatedSafe);
     await pushToSupabase('cash_trusts', newTrust);
-    await pushToSupabase('cash_transactions', newTx);
 
     res.status(201).json({
       success: true,
@@ -1778,9 +1778,9 @@ router.post('/trusts/:id/return', async (req, res) => {
     const updatedTrust = db.prepare('SELECT * FROM cash_trusts WHERE id = ?').get(trustId);
     const returnTx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(returnTxId);
 
+    await pushToSupabase('cash_transactions', returnTx);
     await pushToSupabase('cash_safes', updatedSafe);
     await pushToSupabase('cash_trusts', updatedTrust);
-    await pushToSupabase('cash_transactions', returnTx);
 
     res.json({
       success: true,
