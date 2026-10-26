@@ -8,11 +8,8 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. Get expenses for specific month and year
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const year = Number(req.query.year) || new Date().getFullYear();
     const month = Number(req.query.month) || (new Date().getMonth() + 1);
 

@@ -5,11 +5,8 @@ import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabase
 const router = express.Router();
 
 // 1. Get leaves list
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const { employeeId, year } = req.query;
     let query = `
       SELECT l.*, e.department, e.job_title, e.annual_leave_balance

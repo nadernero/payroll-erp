@@ -5,11 +5,8 @@ import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabase
 const router = express.Router();
 
 // 1. Get all requests
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const { status, type } = req.query;
     let query = `
       SELECT r.*, e.department, e.job_title

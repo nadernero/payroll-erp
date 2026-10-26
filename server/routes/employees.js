@@ -8,11 +8,8 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. Get all employees
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const { department, search } = req.query;
     let query = 'SELECT * FROM employees WHERE 1=1';
     const params = [];

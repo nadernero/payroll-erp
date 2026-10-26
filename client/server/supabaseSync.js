@@ -11,7 +11,10 @@ if (dbUrl) {
   const { Pool } = pg;
   pool = new Pool({
     connectionString: dbUrl,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false },
+    max: 3,
+    idleTimeoutMillis: 2000,
+    connectionTimeoutMillis: 4000
   });
 }
 

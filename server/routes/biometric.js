@@ -6,11 +6,8 @@ import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabase
 const router = express.Router();
 
 // 1. Get all registered biometric devices
-router.get('/devices', async (req, res) => {
+router.get('/devices', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const devices = db.prepare('SELECT * FROM biometric_devices ORDER BY id ASC').all();
     res.json(devices);
   } catch (error) {

@@ -7,11 +7,8 @@ const router = express.Router();
 const arabicDays = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
 // 1. Get all official holidays
-router.get('/', async (req, res) => {
+router.get('/', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const { year } = req.query;
     let query = 'SELECT * FROM official_holidays';
     const params = [];

@@ -7,11 +7,8 @@ import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabase
 const router = express.Router();
 
 // 1. Get all payroll runs
-router.get('/runs', async (req, res) => {
+router.get('/runs', (req, res) => {
   try {
-    if (process.env.VERCEL) {
-      try { await ensureFreshData(db); } catch (e) {}
-    }
     const runs = db.prepare('SELECT * FROM payroll_runs ORDER BY year DESC, month DESC').all();
     res.json(runs);
   } catch (error) {
