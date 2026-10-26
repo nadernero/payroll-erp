@@ -20,6 +20,35 @@ if (dbUrl) {
 }
 
 /**
+ * Executes a PostgreSQL query with automatic single retry for transient socket drops
+ */
+export async function executeQuery(text, params = []) {
+  if (!pool) return null;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await pool.query(text, params);
+    } catch (err) {
+      lastErr = err;
+      const msg = err.message || '';
+      const isTransient = msg.includes('timeout') ||
+                          msg.includes('Connection terminated') ||
+                          msg.includes('connection') ||
+                          msg.includes('closed') ||
+                          err.code === 'ETIMEDOUT' ||
+                          err.code === 'ECONNRESET';
+      if (isTransient && attempt < 2) {
+        console.warn(`[Supabase Pool] Transient socket issue on attempt ${attempt}, retrying... (${msg})`);
+        await new Promise(r => setTimeout(r, 250));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * Push an inserted or updated record directly to Supabase in real-time
  */
 export async function pushToSupabase(table, row) {
@@ -30,31 +59,31 @@ export async function pushToSupabase(table, row) {
   // Resolve remote ID if a natural unique key exists to avoid unique constraint collisions
   try {
     if (table === 'attendance' && targetRow.employee_code && targetRow.date) {
-      const res = await pool.query('SELECT id FROM "attendance" WHERE employee_code = $1 AND date = $2', [targetRow.employee_code, targetRow.date]);
-      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+      const res = await executeQuery('SELECT id FROM "attendance" WHERE employee_code = $1 AND "date" = $2', [targetRow.employee_code, targetRow.date]);
+      if (res && res.rows.length > 0) targetRow.id = res.rows[0].id;
     } else if (table === 'employees' && targetRow.code) {
-      const res = await pool.query('SELECT id FROM "employees" WHERE code = $1', [targetRow.code]);
-      if (res.rows.length > 0) {
+      const res = await executeQuery('SELECT id FROM "employees" WHERE code = $1', [targetRow.code]);
+      if (res && res.rows.length > 0) {
         targetRow.id = res.rows[0].id;
       } else if (targetRow.id) {
-        const idCheck = await pool.query('SELECT id FROM "employees" WHERE id = $1', [targetRow.id]);
-        if (idCheck.rows.length > 0) {
+        const idCheck = await executeQuery('SELECT id FROM "employees" WHERE id = $1', [targetRow.id]);
+        if (idCheck && idCheck.rows.length > 0) {
           delete targetRow.id;
         }
       }
     } else if (table === 'loans' && targetRow.id) {
-      const res = await pool.query('SELECT id FROM "loans" WHERE id = $1', [targetRow.id]);
-      if (res.rows.length > 0 && targetRow.employee_id) {
+      const res = await executeQuery('SELECT id FROM "loans" WHERE id = $1', [targetRow.id]);
+      if (res && res.rows.length > 0 && targetRow.employee_id) {
         // If row with this ID exists but belongs to another employee, omit ID to avoid collision
-        const cur = await pool.query('SELECT id FROM "loans" WHERE id = $1 AND employee_id = $2', [targetRow.id, targetRow.employee_id]);
-        if (cur.rows.length === 0) delete targetRow.id;
+        const cur = await executeQuery('SELECT id FROM "loans" WHERE id = $1 AND employee_id = $2', [targetRow.id, targetRow.employee_id]);
+        if (cur && cur.rows.length === 0) delete targetRow.id;
       }
     } else if (table === 'official_holidays' && targetRow.holiday_date) {
-      const res = await pool.query('SELECT id FROM "official_holidays" WHERE holiday_date = $1', [targetRow.holiday_date]);
-      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+      const res = await executeQuery('SELECT id FROM "official_holidays" WHERE holiday_date = $1', [targetRow.holiday_date]);
+      if (res && res.rows.length > 0) targetRow.id = res.rows[0].id;
     } else if (table === 'payroll_runs' && targetRow.year && targetRow.month) {
-      const res = await pool.query('SELECT id FROM "payroll_runs" WHERE year = $1 AND month = $2', [targetRow.year, targetRow.month]);
-      if (res.rows.length > 0) targetRow.id = res.rows[0].id;
+      const res = await executeQuery('SELECT id FROM "payroll_runs" WHERE year = $1 AND month = $2', [targetRow.year, targetRow.month]);
+      if (res && res.rows.length > 0) targetRow.id = res.rows[0].id;
     } else if (table === 'mid_month_expenses' && targetRow.year && targetRow.month && targetRow.employee_id) {
       delete targetRow.id;
     } else if (table === 'payroll_items') {
@@ -108,12 +137,14 @@ export async function pushToSupabase(table, row) {
     `;
 
   try {
-    await pool.query(query, values);
-    invalidateTableCache(table);
+    await executeQuery(query, values);
+    // Cache Shield: set timestamp so immediate subsequent GETs serve local SQLite without overwriting
+    tableLastPull.set(table, Date.now());
     console.log(`⚡ [Supabase Realtime]: Synced [${table}] ID=${targetRow.id || targetRow.code || targetRow.date}`);
     return true;
   } catch (err) {
     console.error(`⚠️ [Supabase Realtime Push Error in ${table}]:`, err.message);
+    tableLastPull.set(table, Date.now()); // Keep shield active to protect local SQLite
     return false;
   }
 }
@@ -186,14 +217,15 @@ export async function pushBatchToSupabase(table, rows) {
       `;
 
     try {
-      await pool.query(query, values);
+      await executeQuery(query, values);
     } catch (err) {
       console.error(`⚠️ [Supabase Realtime Batch Error in ${table}]:`, err.message);
+      tableLastPull.set(table, Date.now());
       return false;
     }
   }
 
-  invalidateTableCache(table);
+  tableLastPull.set(table, Date.now());
   console.log(`⚡ [Supabase Realtime Batch]: Synced ${rows.length} rows to [${table}]`);
   return true;
 }
@@ -209,11 +241,11 @@ export async function deleteFromSupabase(table, idOrCondition) {
       const keys = Object.keys(idOrCondition);
       const whereClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(' AND ');
       const values = keys.map(k => idOrCondition[k]);
-      await pool.query(`DELETE FROM "${table}" WHERE ${whereClause}`, values);
+      await executeQuery(`DELETE FROM "${table}" WHERE ${whereClause}`, values);
     } else {
-      await pool.query(`DELETE FROM "${table}" WHERE id = $1`, [idOrCondition]);
+      await executeQuery(`DELETE FROM "${table}" WHERE id = $1`, [idOrCondition]);
     }
-    invalidateTableCache(table);
+    tableLastPull.set(table, Date.now());
     console.log(`🗑️ [Supabase Realtime]: Deleted from [${table}]`);
     return true;
   } catch (err) {
@@ -323,9 +355,9 @@ export async function pullFreshAttendance(sqliteDb) {
   if (!pool) return { success: false, reason: 'No DB pool' };
   try {
     const client = await pool.connect();
-    // Pull any attendance records from the last 45 days
-    const cutoffDate = new Date(Date.now() - 45 * 86400000).toISOString().split('T')[0];
-    const res = await client.query('SELECT * FROM "attendance" WHERE date >= $1', [cutoffDate]);
+    // Pull any attendance records from the last 7 days for fast lightweight sync
+    const cutoffDate = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+    const res = await client.query('SELECT * FROM "attendance" WHERE "date" >= $1', [cutoffDate]);
 
     if (res.rows) {
       // 1. Delete local attendance records in range that no longer exist in Supabase

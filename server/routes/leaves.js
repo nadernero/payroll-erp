@@ -5,8 +5,14 @@ import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabase
 const router = express.Router();
 
 // 1. Get leaves list
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'leaves', 15000);
+      } catch (e) {}
+    }
     const { employeeId, year } = req.query;
     let query = `
       SELECT l.*, e.department, e.job_title, e.annual_leave_balance
@@ -34,8 +40,14 @@ router.get('/', (req, res) => {
 });
 
 // 2. Get leave balances for all employees
-router.get('/balances', (req, res) => {
+router.get('/balances', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'employees', 15000);
+      } catch (e) {}
+    }
     const currentYear = new Date().getFullYear();
     const rows = db.prepare(`
       SELECT 

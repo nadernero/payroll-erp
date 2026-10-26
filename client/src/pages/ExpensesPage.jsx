@@ -79,6 +79,7 @@ export default function ExpensesPage() {
       });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
+      loadData();
     } catch (err) {
       alert('خطأ أثناء حفظ المصروفات: ' + err.message);
     } finally {
