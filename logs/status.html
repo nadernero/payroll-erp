@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>تقرير حالة المزامنة التلقائية لماكينات البصمة</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 30px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 25px; max-width: 750px; margin: 0 auto; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    h1 { margin-top: 0; font-size: 22px; color: #38bdf8; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }
+    .box { background: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 15px; }
+    .box-title { font-size: 12px; color: #94a3b8; margin-bottom: 5px; }
+    .box-value { font-size: 16px; font-weight: bold; color: #10b981; }
+    .device { display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 12px 16px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #334155; }
+    .badge { font-size: 11px; padding: 4px 10px; border-radius: 20px; font-weight: bold; background: #065f46; color: #6ee7b7; }
+    .log-list { background: #0f172a; border-radius: 14px; padding: 15px; font-family: monospace; font-size: 12px; color: #cbd5e1; line-height: 1.8; border: 1px solid #334155; max-height: 200px; overflow-y: auto; }
+    .btn { display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; font-size: 14px; margin-top: 20px; transition: 0.2s; }
+    .btn:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🚀 حالة المزامنة التلقائية لماكينات البصمة (Payroll ERP)</h1>
+    
+    <div class="grid">
+      <div class="box">
+        <div class="box-title">حالة الخدمة المجدولة</div>
+        <div class="box-value">✓ نشطة وتعمل تلقائياً (Ready)</div>
+      </div>
+      <div class="box">
+        <div class="box-title">موعد التشغيل القادم</div>
+        <div class="box-value" style="color: #38bdf8;">⏰ 26/10/2026 01:30:00 م</div>
+      </div>
+    </div>
+
+    <h3 style="font-size: 14px; color: #cbd5e1; margin-top: 25px;">📡 الماكينات المتصلة والمفعلة:</h3>
+    
+    <div class="device">
+      <div>
+        <strong>ماكينة الإدارة الرئيسية (داخلية LAN)</strong>
+        <div style="font-size: 11px; color: #94a3b8; font-family: monospace;">192.168.1.66:4370</div>
+      </div>
+      <span class="badge">✓ متصلة وتسحب آلياً</span>
+    </div>
+
+    <div class="device">
+      <div>
+        <strong>ماكينة المصنع / الورشة (IP حقيقي)</strong>
+        <div style="font-size: 11px; color: #94a3b8; font-family: monospace;">81.10.115.81:4370</div>
+      </div>
+      <span class="badge">✓ متصلة وتسحب آلياً</span>
+    </div>
+
+    <h3 style="font-size: 14px; color: #cbd5e1; margin-top: 25px;">📋 آخر دورات المزامنة المسجلة في السجل:</h3>
+    <div class="log-list">
+      <div>[٢٦‏/١٠‏/٢٠٢٦، ١:٠٠:١٧ م] ✅ تم سحب الماكينة [ماكينة البصمة الرئيسية (الإدارة)] (192.168.1.66): 4645 يوم حضور مسجل.</div><div>[٢٦‏/١٠‏/٢٠٢٦، ١:٠٠:٢٤ م] ✅ تم سحب الماكينة [ماكينة بصمة المصنع / الورشة] (81.10.115.81): 611 يوم حضور مسجل.</div><div>[٢٦‏/١٠‏/٢٠٢٦، ١:٠٠:٢٩ م] ⚡ اكتملت المزامنة السحابية بنجاح: 5256 يوم عمل، 2/2 ماكينة.</div><div>[٢٦‏/١٠‏/٢٠٢٦، ١:١٥:١٨ م] ✅ تم سحب الماكينة [ماكينة البصمة الرئيسية (الإدارة)] (192.168.1.66): 4645 يوم حضور مسجل.</div><div>[٢٦‏/١٠‏/٢٠٢٦، ١:١٥:٢٥ م] ✅ تم سحب الماكينة [ماكينة بصمة المصنع / الورشة] (81.10.115.81): 611 يوم حضور مسجل.</div><div>[٢٦‏/١٠‏/٢٠٢٦، ١:١٥:٢٩ م] ⚡ اكتملت المزامنة السحابية بنجاح: 5256 يوم عمل، 2/2 ماكينة.</div>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px;">
+      <a href="https://company-payroll-erp-2026.web.app" target="_blank" class="btn">
+        🌐 فتح موقع الحضور السحابي 24/7
+      </a>
+    </div>
+  </div>
+</body>
+</html>
