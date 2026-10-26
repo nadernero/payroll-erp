@@ -94,6 +94,16 @@ app.get(['/api/health', '/health'], (req, res) => {
   });
 });
 
+// Diagnostic debug endpoint
+app.get(['/api/debug-db', '/debug-db'], async (req, res) => {
+  try {
+    const row = db.prepare('SELECT COUNT(*) as c FROM employees').get();
+    res.json({ success: true, count: row.c, vercel: !!process.env.VERCEL });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // Manual sync trigger (Push from SQLite to Supabase)
 app.post(['/api/sync/trigger', '/sync/trigger'], async (req, res) => {
   try {
@@ -139,5 +149,12 @@ if (fs.existsSync(clientDist)) {
     next();
   });
 }
+
+// Global express error handler
+app.use((err, req, res, next) => {
+  console.error('[Express Global Error]:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err?.message || 'Server error', stack: err?.stack });
+});
 
 export default app;
