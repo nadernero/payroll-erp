@@ -81,6 +81,12 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
   const [isUploading, setIsUploading] = useState(false);
   const [importMessage, setImportMessage] = useState(null);
 
+  // Export Colored Attendance Cards Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportScope, setExportScope] = useState('single'); // 'single', 'selected', 'all'
+  const [exportSelectedEmpCode, setExportSelectedEmpCode] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -378,6 +384,76 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     }
   };
 
+  // Export Colored Attendance Cards to Excel
+  const handleExportCards = async (customCodes = null) => {
+    try {
+      setIsExporting(true);
+      let targetCodes = 'all';
+
+      if (customCodes) {
+        targetCodes = customCodes;
+      } else if (exportScope === 'single') {
+        if (!exportSelectedEmpCode) {
+          alert('يرجى اختيار الموظف أولاً');
+          setIsExporting(false);
+          return;
+        }
+        targetCodes = [exportSelectedEmpCode];
+      } else if (exportScope === 'selected') {
+        if (selectedIds.size === 0) {
+          alert('لم يتم تحديد أي حركات في الجدول');
+          setIsExporting(false);
+          return;
+        }
+        const selectedRecs = records.filter(r => selectedIds.has(r.id));
+        const uniqueCodes = Array.from(new Set(selectedRecs.map(r => String(r.employee_code).trim())));
+        if (uniqueCodes.length === 0) {
+          alert('تعذر استخراج أكواد الموظفين المحددين');
+          setIsExporting(false);
+          return;
+        }
+        targetCodes = uniqueCodes;
+      } else if (exportScope === 'all') {
+        targetCodes = 'all';
+      }
+
+      const res = await fetch('/api/attendance/export/cards/excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          year,
+          month,
+          startDate,
+          endDate,
+          employeeCodes: targetCodes,
+          department: deptFilter !== 'all' ? deptFilter : 'all'
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'فشل في تصدير كروت الحضور');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const fileSuffix = year && month ? `${year}_${month}` : (startDate ? `${startDate}_${endDate}` : 'cards');
+      a.download = `كروت_الحضور_والانصراف_${fileSuffix}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      setShowExportModal(false);
+    } catch (err) {
+      alert('خطأ أثناء تصدير كارت الحضور الإكسيل: ' + err.message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Filtering records locally
   const filteredRecords = records.filter(r => {
     // 0. Date Range filter (strict filter based on selected from / to date)
@@ -398,10 +474,17 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     const hasIn = !!r.check_in && r.check_in.trim() !== '';
     const hasOut = !!r.check_out && r.check_out.trim() !== '';
 
+    // Check if official holiday or weekend
+    const isWeekendDay = r.is_weekend === 1 || r.day_name === 'الجمعة' || (r.status && r.status.includes('أسبوعية'));
+    const isOfficialHolidayDay = r.is_holiday === 1 || !!r.holiday_name || (r.status && r.status.includes('رسمية'));
+
     if (punchFilter === 'missing_either') {
       if (hasIn && hasOut) return false;
+      if (isWeekendDay || isOfficialHolidayDay) return false;
     } else if (punchFilter === 'missing_both') {
       if (hasIn || hasOut) return false;
+      // لا يظهر بها أيام الإجازات الرسمية أو العطلات الأسبوعية طبقاً للطلب
+      if (isWeekendDay || isOfficialHolidayDay) return false;
     } else if (punchFilter === 'has_punch') {
       if (!hasIn && !hasOut) return false;
     }
@@ -500,6 +583,29 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
             <Download className="w-4 h-4 text-slate-500" />
             قالب إكسيل
           </a>
+
+          {/* Export Styled Colored Attendance Cards */}
+          <button
+            onClick={() => {
+              if (selectedIds.size > 0) {
+                setExportScope('selected');
+              } else if (filteredSummary.length === 1) {
+                setExportSelectedEmpCode(filteredSummary[0].employee_code);
+                setExportScope('single');
+              } else {
+                setExportScope('single');
+                if (filteredSummary.length > 0 && !exportSelectedEmpCode) {
+                  setExportSelectedEmpCode(filteredSummary[0].employee_code);
+                }
+              }
+              setShowExportModal(true);
+            }}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs md:text-sm font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-all border border-emerald-300 shadow-xs cursor-pointer"
+            title="تصدير كارت حضور تفصيلي لموظف أو أكثر إكسيل ملون"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+            تصدير كارت إكسيل ملون
+          </button>
 
           {/* Import Attendance */}
           <button
@@ -811,6 +917,19 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
               تسجيل إجازة سنوية للمحددين
             </button>
 
+            {/* Bulk Export to Colored Excel */}
+            <button
+              onClick={() => {
+                setExportScope('selected');
+                setShowExportModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-teal-600 hover:bg-teal-500 rounded-xl shadow-xs transition-all cursor-pointer"
+              title="تصدير كروت الحضور للموظفين المحددين في ملف إكسيل ملون"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              تصدير كروت المحددين إكسيل
+            </button>
+
             {/* Cancel selection */}
             <button
               onClick={handleClearSelection}
@@ -1104,18 +1223,43 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
         ) : activeTab === 'summary' ? (
           /* Monthly Summary with Days metrics (Remaining Leaves & Loans added, Delay removed) */
           <div className="overflow-x-auto">
+            <div className="p-3 bg-emerald-50/60 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
+              <span className="flex items-center gap-1.5 font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                يتم احتساب أيام العطلات الأسبوعية (الجمعة) والإجازات الرسمية ضمن إجمالي أيام الحضور المحتسبة للشهر لأنها إجازات مدفوعة الأجر.
+              </span>
+              <button
+                onClick={() => {
+                  setExportScope('all');
+                  setShowExportModal(true);
+                }}
+                className="px-3 py-1 font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                تصدير ملخص وكروت الجميع إكسيل ملون
+              </button>
+            </div>
             <table className="w-full text-right text-xs text-slate-600">
               <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-3 text-center">الكود</th>
                   <th className="py-3 px-4 font-bold text-slate-900">اسم الموظف</th>
                   <th className="py-3 px-3">القسم</th>
-                  <th className="py-3 px-3 text-center font-bold text-emerald-700 bg-emerald-50/50">أيام الحضور</th>
+                  <th className="py-3 px-3 text-center font-bold text-emerald-800 bg-emerald-50" title="إجمالي أيام الحضور شاملة العطلات الأسبوعية والإجازات الرسمية مدفوعة الأجر">
+                    إجمالي الحضور المحتسب (مدفوع)
+                  </th>
+                  <th className="py-3 px-3 text-center font-bold text-blue-800 bg-blue-50/50" title="أيام الحضور الفعلي المسجل بها بصمة">
+                    حضور بالبصمة
+                  </th>
+                  <th className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-50/50" title="أيام العطلات الأسبوعية (الجمعة) والإجازات الرسمية">
+                    عطلات ورسمية
+                  </th>
                   <th className="py-3 px-3 text-center font-bold text-rose-700 bg-rose-50/50">أيام الغياب</th>
-                  <th className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/50">أيام الإضافي (يوم)</th>
+                  <th className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/30">أيام الإضافي (يوم)</th>
                   <th className="py-3 px-3 text-center font-bold text-amber-700 bg-amber-50/50">إجازات سنوية</th>
                   <th className="py-3 px-3 text-center font-bold text-emerald-800 bg-emerald-100/50">باقي الإجازات السنوي</th>
                   <th className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-100/50">باقي السلف</th>
+                  <th className="py-3 px-3 text-center font-bold text-slate-700">كارت الموظف</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono">
@@ -1126,8 +1270,16 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-800 font-sans">{sum.employee_name}</td>
                     <td className="py-3 px-3 text-slate-600 font-sans">{sum.department}</td>
-                    <td className="py-3 px-3 text-center font-bold text-emerald-700">
-                      {sum.present_days} يوم
+                    <td className="py-3 px-3 text-center font-bold text-emerald-700 bg-emerald-50/30">
+                      <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900 font-black">
+                        {sum.present_days} يوم
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-center font-bold text-blue-700">
+                      {sum.actual_present_days ?? sum.present_days} يوم
+                    </td>
+                    <td className="py-3 px-3 text-center font-bold text-purple-700">
+                      {((sum.weekend_days || 0) + (sum.official_holiday_days || 0))} يوم
                     </td>
                     <td className="py-3 px-3 text-center font-bold text-rose-700">
                       {sum.absent_days} يوم
@@ -1149,6 +1301,18 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                       <span className="px-2 py-0.5 rounded-lg bg-purple-100 text-purple-900">
                         {(sum.remaining_loan_balance || 0).toLocaleString()} ج.م
                       </span>
+                    </td>
+                    {/* Direct Export Employee Card */}
+                    <td className="py-3 px-3 text-center font-sans">
+                      <button
+                        onClick={() => handleExportCards([sum.employee_code])}
+                        disabled={isExporting}
+                        className="px-2.5 py-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                        title="تحميل كارت الحضور التفصيلي الملون لهذا الموظف إكسيل"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                        كارت إكسيل
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1832,6 +1996,153 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Export Colored Attendance Cards Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 p-6 space-y-5">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">تصدير كروت الحضور (إكسيل ملون)</h3>
+                  <p className="text-xs text-slate-500">كروت حضور تفصيلية وملخص عام منسق بالألوان</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Scope Selection */}
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-slate-700">اختر نطاق التصدير:</label>
+              
+              <div className="space-y-2 text-xs">
+                {/* 1. Single Employee */}
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border transition-all cursor-pointer ${
+                  exportScope === 'single' ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                }`}>
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    value="single"
+                    checked={exportScope === 'single'}
+                    onChange={() => setExportScope('single')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div className="flex-1 space-y-2">
+                    <span className="font-bold text-slate-800 block">موظف محدد (كارت تفصيلي كامل)</span>
+                    {exportScope === 'single' && (
+                      <select
+                        value={exportSelectedEmpCode}
+                        onChange={(e) => setExportSelectedEmpCode(e.target.value)}
+                        className="w-full py-1.5 px-3 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="">-- اختر الموظف من القائمة --</option>
+                        {summary.map(emp => (
+                          <option key={emp.employee_id} value={emp.employee_code}>
+                            [{emp.employee_code}] {emp.employee_name} ({emp.department || 'عام'})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </label>
+
+                {/* 2. Selected from Table */}
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border transition-all cursor-pointer ${
+                  selectedIds.size === 0 ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' :
+                  exportScope === 'selected' ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                }`}>
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    value="selected"
+                    disabled={selectedIds.size === 0}
+                    checked={exportScope === 'selected'}
+                    onChange={() => setExportScope('selected')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 block">الموظفون المحددون في الجدول</span>
+                    <span className="text-[11px] text-slate-500">
+                      {selectedIds.size > 0 
+                        ? `سيتم تصدير كروت ${new Set(records.filter(r => selectedIds.has(r.id)).map(r => r.employee_code)).size} موظف من واقع الحركات المحددة (${selectedIds.size} حركة)`
+                        : 'قم بتحديد صفوف من جدول الحركات أولاً لتفعيل هذا الخيار'}
+                    </span>
+                  </div>
+                </label>
+
+                {/* 3. All Employees */}
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border transition-all cursor-pointer ${
+                  exportScope === 'all' ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                }`}>
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    value="all"
+                    checked={exportScope === 'all'}
+                    onChange={() => setExportScope('all')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 block">جميع موظفي الشركة {deptFilter !== 'all' ? `(قسم ${deptFilter})` : ''}</span>
+                    <span className="text-[11px] text-slate-500">
+                      ملف إكسيل شامل: شيت رئيسي لملخص الحضور العام + شيت منفصل ملون لكل موظف ({summary.length} موظف)
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Smart Calculation Notice Banner */}
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-3.5 flex items-start gap-3 text-xs">
+              <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-emerald-950">
+                <p className="font-bold">ميزة الاحتساب والتلوين التلقائي الذكي:</p>
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  يتم احتساب أيام <strong>العطلات الأسبوعية (الجمعة)</strong> و<strong>الإجازات الرسمية</strong> تلقائياً كأيام حضور مدفوعة الأجر كاملة وتظهر في الإكسيل مُميزة بالألوان (بنفسجي للإجازات الرسمية والأسبوعية، وأخضر للحضور الفعلي، وأحمر للغياب).
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExportCards()}
+                disabled={isExporting}
+                className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isExporting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جارِ تجهيز الإكسيل الملون...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    <span>تحميل ملف الإكسيل الملون</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
