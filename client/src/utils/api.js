@@ -27,8 +27,20 @@ export async function fetchJson(endpoint, options = {}) {
       }
     });
   } catch (netErr) {
-    console.error(`[API Network Error] ${url}:`, netErr);
-    throw new Error('تعذر الاتصال بالسيرفر السحابي، يرجى التحقق من اتصال الإنترنت.');
+    // Retry once after 600ms to recover from serverless cold-start wakeups
+    try {
+      await new Promise(r => setTimeout(r, 600));
+      res = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        }
+      });
+    } catch (retryErr) {
+      console.error(`[API Network Error] ${url}:`, retryErr);
+      throw new Error('تعذر الاتصال بالسيرفر السحابي، يرجى التحقق من اتصال الإنترنت.');
+    }
   }
 
   const contentType = res.headers.get('content-type') || '';

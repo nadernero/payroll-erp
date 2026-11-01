@@ -6,9 +6,23 @@ import { pushToSupabase, pushBatchToSupabase, deleteFromSupabase, ensureFreshDat
 const router = express.Router();
 
 // 1. Get all registered biometric devices
-router.get('/devices', (req, res) => {
+router.get('/devices', async (req, res) => {
   try {
-    const devices = db.prepare('SELECT * FROM biometric_devices ORDER BY id ASC').all();
+    if (process.env.VERCEL) {
+      try {
+        const { ensureFreshData } = await import('../firestoreSync.js');
+        if (ensureFreshData) await ensureFreshData(db, 'biometric_devices');
+      } catch (e) {}
+    }
+    let devices = db.prepare('SELECT * FROM biometric_devices ORDER BY id ASC').all();
+    if (!devices || devices.length === 0) {
+      db.prepare(`
+        INSERT INTO biometric_devices (name, ip, port, protocol, timeout, location)
+        VALUES ('ماكينة البصمة الرئيسية (الإدارة)', '192.168.1.201', 4370, 'udp', 5000, 'المدخل الرئيسي'),
+               ('ماكينة بصمة المصنع / الورشة', '192.168.1.202', 4370, 'udp', 5000, 'بوابة المصنع')
+      `).run();
+      devices = db.prepare('SELECT * FROM biometric_devices ORDER BY id ASC').all();
+    }
     res.json(devices);
   } catch (error) {
     res.status(500).json({ error: error.message });

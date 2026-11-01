@@ -29,15 +29,17 @@ try {
   console.warn('initDatabase notice:', e.message);
 }
 
-let lastAttendancePull = 0;
-export async function ensureAttendanceFresh() {
+const lastAttendancePullRanges = new Map();
+export async function ensureAttendanceFresh(startDate = null, endDate = null) {
   if (!process.env.VERCEL) return;
   const now = Date.now();
-  if (now - lastAttendancePull > 30000) { // 30s TTL
-    lastAttendancePull = now;
+  const rangeKey = `${startDate || 'default'}_${endDate || 'default'}`;
+  const lastPull = lastAttendancePullRanges.get(rangeKey) || 0;
+  if (now - lastPull > 30000) { // 30s TTL per range
+    lastAttendancePullRanges.set(rangeKey, now);
     try {
       const { pullFreshAttendance } = await import('./firestoreSync.js');
-      await pullFreshAttendance(db);
+      await pullFreshAttendance(db, startDate, endDate);
     } catch (e) {
       console.warn('Auto pullFreshAttendance warning:', e.message);
     }

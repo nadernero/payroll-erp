@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   CalendarCheck, Clock, Download, Upload, Search, Filter, 
   FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw, X, 
@@ -20,6 +20,9 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' or 'summary'
 
   // Advanced Filters
+  const [dayOfWeekFilter, setDayOfWeekFilter] = useState('all');
+  const [employeeFilter, setEmployeeFilter] = useState('all');
+  const [statusTypeFilter, setStatusTypeFilter] = useState('all');
   const [punchFilter, setPunchFilter] = useState('all'); // all, missing_either, missing_both, has_punch
   const [checkInFrom, setCheckInFrom] = useState('');
   const [checkInTo, setCheckInTo] = useState('');
@@ -101,10 +104,12 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
   const [dateSortOrder, setDateSortOrder] = useState('asc'); // 'asc' or 'desc'
   const [daySortOrder, setDaySortOrder] = useState(null); // null, 'asc', 'desc'
 
-  const loadData = async () => {
+  const loadData = async (overrideYear = null, overrideMonth = null) => {
     try {
       setLoading(true);
-      let query = `?year=${year}&month=${month}`;
+      const activeYear = overrideYear || year;
+      const activeMonth = overrideMonth || month;
+      let query = `?year=${activeYear}&month=${activeMonth}`;
       if (startDate) {
         query += `&startDate=${startDate}`;
       }
@@ -117,8 +122,8 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
 
       const [recs, sum, hols] = await Promise.all([
         fetchJson(`/attendance${query}`),
-        fetchJson(`/attendance/summary?year=${year}&month=${month}`),
-        fetchJson(`/holidays?year=${year}`).catch(() => [])
+        fetchJson(`/attendance/summary?year=${activeYear}&month=${activeMonth}`),
+        fetchJson(`/holidays?year=${activeYear}`).catch(() => [])
       ]);
 
       setRecords(recs);
@@ -252,7 +257,11 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
       if (editingRecord && editingRecord.id && editingRecord.id !== 0) {
         await fetchJson(`/attendance/${editingRecord.id}`, {
           method: 'PUT',
-          body: JSON.stringify(entryData)
+          body: JSON.stringify({
+            ...entryData,
+            employee_code: editingRecord?.employee_code || entryData.employee_code,
+            date: editingRecord?.date || entryData.date
+          })
         });
       } else {
         await fetchJson('/attendance/record', {
@@ -426,6 +435,8 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
           const detectedYear = Number(parts[0]);
           const detectedMonth = Number(parts[1]);
           if (detectedYear && detectedMonth) {
+            setStartDate('');
+            setEndDate('');
             setYear(detectedYear);
             setMonth(detectedMonth);
           }
@@ -523,10 +534,35 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
   };
 
   // Filtering records locally
+  // Unique employee list for filter dropdown
+  const uniqueEmployees = useMemo(() => {
+    const map = new Map();
+    summary.forEach(s => {
+      const code = String(s.employee_code).trim();
+      if (!map.has(code)) map.set(code, { code, name: s.employee_name, department: s.department });
+    });
+    records.forEach(r => {
+      const code = String(r.employee_code).trim();
+      if (!map.has(code)) map.set(code, { code, name: r.employee_name, department: r.department });
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      const na = parseInt(a.code, 10);
+      const nb = parseInt(b.code, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.code.localeCompare(b.code);
+    });
+  }, [summary, records]);
+
   const filteredRecords = records.filter(r => {
     // 0. Date Range filter (strict filter based on selected from / to date)
     if (startDate && r.date < startDate) return false;
     if (endDate && r.date > endDate) return false;
+
+    // Day of Week Filter
+    if (dayOfWeekFilter !== 'all' && r.day_name !== dayOfWeekFilter) return false;
+
+    // Employee Filter
+    if (employeeFilter !== 'all' && String(r.employee_code).trim() !== String(employeeFilter).trim()) return false;
 
     // 1. Text Search
     if (searchTerm) {
@@ -543,7 +579,7 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     const hasOut = !!r.check_out && r.check_out.trim() !== '';
 
     // Check if official holiday or weekend
-    const isWeekendDay = r.is_weekend === 1 || r.day_name === 'الجمعة' || (r.status && r.status.includes('أسبوعية'));
+    const isWeekendDay = r.is_weekend === 1 || r.day_name === 'الجمعة' || r.day_name === 'الأحد' || (r.status && r.status.includes('أسبوعية'));
     const isOfficialHolidayDay = r.is_holiday === 1 || !!r.holiday_name || (r.status && r.status.includes('رسمية'));
 
     if (punchFilter === 'missing_either') {
@@ -557,6 +593,29 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
       if (!hasIn && !hasOut) return false;
     }
 
+    // Status & Movement Type Filter
+    if (statusTypeFilter !== 'all') {
+      if (statusTypeFilter === 'present') {
+        if (!hasIn && !hasOut && !(r.status && r.status.includes('حاضر') && !r.status.includes('بدون'))) return false;
+      } else if (statusTypeFilter === 'absent') {
+        const isAbs = r.is_absent === 1 || (r.absence_days > 0) || (r.status && r.status.includes('غياب'));
+        if (!isAbs) return false;
+      } else if (statusTypeFilter === 'annual_leave') {
+        const isAnn = r.is_annual_leave === 1 || (r.status && r.status.includes('سنوي'));
+        if (!isAnn) return false;
+      } else if (statusTypeFilter === 'holiday') {
+        if (!isOfficialHolidayDay) return false;
+      } else if (statusTypeFilter === 'weekend') {
+        if (!isWeekendDay) return false;
+      } else if (statusTypeFilter === 'overtime') {
+        if (!(Number(r.overtime_days) > 0 || Number(r.overtime_hours) > 0)) return false;
+      } else if (statusTypeFilter === 'delay') {
+        if (!(Number(r.late_minutes) > 0)) return false;
+      } else if (statusTypeFilter === 'overnight') {
+        if (r.is_overnight !== 1) return false;
+      }
+    }
+
     // 3. Time Filter: Check-in
     if (checkInFrom && (!r.check_in || r.check_in < checkInFrom)) return false;
     if (checkInTo && (!r.check_in || r.check_in > checkInTo)) return false;
@@ -568,11 +627,11 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     return true;
   });
 
-  const filteredSummary = summary.filter(s =>
+  const filteredSummary = summary.filter(s => (employeeFilter === 'all' || String(s.employee_code).trim() === String(employeeFilter).trim()) && (
     !searchTerm ||
     s.employee_name.includes(searchTerm) ||
     s.employee_code.includes(searchTerm) ||
-    (s.department && s.department.includes(searchTerm))
+    (s.department && s.department.includes(searchTerm)))
   );
 
   // Sort filtered records (Default: chronological ASC تصاعدي حسب التاريخ من 1 إلى 31)
@@ -860,7 +919,62 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
         </div>
 
         {/* Advanced Punch & Time Range Filters Bar */}
-        <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-slate-50/70 p-3 rounded-xl text-xs">
+        <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 bg-slate-50/70 p-3 rounded-xl text-xs">
+          {/* Employee Filter */}
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">فلترة بالموظف</label>
+            <select
+              value={employeeFilter}
+              onChange={(e) => setEmployeeFilter(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-medium text-slate-800"
+            >
+              <option value="all">كل الموظفين ({uniqueEmployees.length})</option>
+              {uniqueEmployees.map(emp => (
+                <option key={emp.code} value={emp.code}>
+                  {emp.code} - {emp.name} {emp.department ? `(${emp.department})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Day of Week Filter */}
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">فلترة بيوم الأسبوع</label>
+            <select
+              value={dayOfWeekFilter}
+              onChange={(e) => setDayOfWeekFilter(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-medium text-slate-800"
+            >
+              <option value="all">كل أيام الأسبوع</option>
+              <option value="الأحد">الأحد (عطلة أسبوعية)</option>
+              <option value="الإثنين">الإثنين</option>
+              <option value="الثلاثاء">الثلاثاء</option>
+              <option value="الأربعاء">الأربعاء</option>
+              <option value="الخميس">الخميس</option>
+              <option value="الجمعة">الجمعة (عطلة أسبوعية)</option>
+              <option value="السبت">السبت</option>
+            </select>
+          </div>
+
+          {/* Movement / Status Type Filter */}
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">نوع الحركة / الحالة</label>
+            <select
+              value={statusTypeFilter}
+              onChange={(e) => setStatusTypeFilter(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-medium text-slate-800"
+            >
+              <option value="all">جميع الحالات والحركات</option>
+              <option value="present">✅ حضور فعلي (بصمة)</option>
+              <option value="absent">❌ غياب (بدون رصيد)</option>
+              <option value="annual_leave">🌴 إجازة سنوية</option>
+              <option value="holiday">🎉 إجازة رسمية مدفوعة</option>
+              <option value="weekend">☕ عطلة أسبوعية (جمعة وأحد)</option>
+              <option value="overtime">⏱️ وقت إضافي (أيام/ساعات)</option>
+              <option value="delay">⏳ تأخير صباحي</option>
+              <option value="overnight">🌙 مبيت</option>
+            </select>
+          </div>
           {/* Punch Status Filter */}
           <div>
             <label className="block font-semibold text-slate-700 mb-1">تصفية حالة البصمة</label>
@@ -931,11 +1045,15 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
             >
               تحديد كل النتائج ({filteredRecords.length})
             </button>
-            {(punchFilter !== 'all' || checkInFrom || checkInTo || checkOutFrom || checkOutTo) && (
+            {(punchFilter !== 'all' || dayOfWeekFilter !== 'all' || employeeFilter !== 'all' || statusTypeFilter !== 'all' || checkInFrom || checkInTo || checkOutFrom || checkOutTo) && (
               <button
                 type="button"
                 onClick={() => {
                   setPunchFilter('all');
+                  setDayOfWeekFilter('all');
+                  setEmployeeFilter('all');
+                  setStatusTypeFilter('all');
+                  setSearchTerm('');
                   setCheckInFrom('');
                   setCheckInTo('');
                   setCheckOutFrom('');
@@ -1413,7 +1531,7 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
             <div className="p-3 bg-emerald-50/60 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
               <span className="flex items-center gap-1.5 font-bold">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                يتم احتساب أيام العطلات الأسبوعية (الجمعة) والإجازات الرسمية ضمن إجمالي أيام الحضور المحتسبة للشهر لأنها إجازات مدفوعة الأجر.
+                يتم احتساب أيام العطلات الأسبوعية (الجمعة والأحد) والإجازات الرسمية ضمن إجمالي أيام الحضور المحتسبة للشهر لأنها إجازات مدفوعة الأجر.
               </span>
               <div className="flex items-center gap-2">
                 {selectedSummaryCodes.size > 0 && (
@@ -1461,7 +1579,7 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                   <th className="py-3 px-3 text-center font-bold text-blue-800 bg-blue-50/50" title="أيام الحضور الفعلي المسجل بها بصمة">
                     حضور بالبصمة
                   </th>
-                  <th className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-50/50" title="أيام العطلات الأسبوعية (الجمعة) والإجازات الرسمية">
+                  <th className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-50/50" title="أيام العطلات الأسبوعية (الجمعة والأحد) والإجازات الرسمية">
                     عطلات ورسمية
                   </th>
                   <th className="py-3 px-3 text-center font-bold text-rose-700 bg-rose-50/50">أيام الغياب</th>
@@ -2467,7 +2585,7 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
               <div className="space-y-0.5 text-emerald-950">
                 <p className="font-bold text-[11px]">ميزة الاحتساب والتلوين التلقائي الذكي:</p>
                 <p className="text-[10px] text-emerald-800 leading-relaxed">
-                  يتم احتساب أيام <strong>العطلات الأسبوعية (الجمعة)</strong> و<strong>الإجازات الرسمية</strong> تلقائياً كأيام حضور مدفوعة الأجر كاملة وتظهر في الإكسيل مُميزة بالألوان (بنفسجي للإجازات الرسمية والأسبوعية، وأخضر للحضور الفعلي، وأحمر للغياب).
+                  يتم احتساب أيام <strong>العطلات الأسبوعية (الجمعة والأحد)</strong> و<strong>الإجازات الرسمية</strong> تلقائياً كأيام حضور مدفوعة الأجر كاملة وتظهر في الإكسيل مُميزة بالألوان (بنفسجي للإجازات الرسمية والأسبوعية، وأخضر للحضور الفعلي، وأحمر للغياب).
                 </p>
               </div>
             </div>

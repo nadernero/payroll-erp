@@ -315,6 +315,7 @@ export async function generateAttendanceCardsWorkbook({
     let absentDays = 0;
     let totalOvertimeDays = 0;
     let totalLateMinutes = 0;
+    let remBal = Math.max(0, (emp.annual_leave_balance || 21) - taken);
 
     // Process daily entries
     const dailyRowsData = [];
@@ -391,8 +392,17 @@ export async function generateAttendanceCardsWorkbook({
           rowType = 'annual_leave';
           annualLeaveDays += 1;
         } else {
-          status = 'بدون بصمة (غير مسجل)';
-          rowType = 'missing';
+          if (remBal >= 1) {
+            status = 'إجازة سنوية (تلقائية من الرصيد)';
+            rowType = 'annual_leave';
+            annualLeaveDays += 1;
+            remBal -= 1;
+          } else {
+            status = 'غياب (بدون رصيد)';
+            rowType = 'absent';
+            absenceDayVal = 1.0;
+            absentDays += 1.0;
+          }
         }
       } else {
         // Missing attendance row: compute based on calendar status
@@ -409,8 +419,17 @@ export async function generateAttendanceCardsWorkbook({
           rowType = 'weekend';
           weekendDays += 1;
         } else {
-          status = 'بدون بصمة (غير مسجل)';
-          rowType = 'missing';
+          if (remBal >= 1) {
+            status = 'إجازة سنوية (تلقائية من الرصيد)';
+            rowType = 'annual_leave';
+            annualLeaveDays += 1;
+            remBal -= 1;
+          } else {
+            status = 'غياب (بدون رصيد)';
+            rowType = 'absent';
+            absenceDayVal = 1.0;
+            absentDays += 1.0;
+          }
         }
       }
 

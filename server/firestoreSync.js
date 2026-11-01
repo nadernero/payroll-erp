@@ -92,13 +92,13 @@ export function invalidateTableCache(table) {
  */
 export function getDocId(collection, item) {
   if (!item) return null;
-  if (collection === 'attendance') return `${item.employee_code}_${item.date}`;
-  if (collection === 'employees') return String(item.code || item.id);
-  if (collection === 'official_holidays') return String(item.holiday_date);
+  if (collection === 'attendance') return `${String(item.employee_code).trim()}_${String(item.date).trim()}`;
+  if (collection === 'employees') return String(item.code || item.id).trim();
+  if (collection === 'official_holidays') return String(item.holiday_date).trim();
   if (collection === 'payroll_runs') return `${item.year}_${item.month}`;
   if (collection === 'payroll_items') return `${item.payroll_run_id}_${item.employee_id}`;
   if (collection === 'mid_month_expenses') return `${item.year}_${item.month}_${item.employee_id}`;
-  if (collection === 'treasury_parties' && item.name) return String(item.name);
+  if (collection === 'treasury_parties' && item.name) return String(item.name).trim();
   return String(item.id || Date.now());
 }
 
@@ -358,15 +358,24 @@ export async function pullFromFirestore(sqliteDb, collectionList = null) {
 export const pullFromSupabase = pullFromFirestore;
 
 /**
- * Pull fresh attendance records for recent days without deleting local data
+ * Pull fresh attendance records for recent days or a specific date range without deleting local data
  */
-export async function pullFreshAttendanceFromFirestore(sqliteDb) {
+export async function pullFreshAttendanceFromFirestore(sqliteDb, startDate = null, endDate = null) {
   const db = initFirebaseAdmin();
   if (!db) return { success: false, reason: 'Firestore not initialized' };
 
   try {
-    const cutoffDate = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-    const snap = await db.collection('attendance').where('date', '>=', cutoffDate).get();
+    let query = db.collection('attendance');
+    if (startDate && endDate) {
+      query = query.where('date', '>=', String(startDate)).where('date', '<=', String(endDate));
+    } else if (startDate) {
+      query = query.where('date', '>=', String(startDate));
+    } else {
+      // Extended cutoff to 180 days so recent past months are always covered
+      const cutoffDate = new Date(Date.now() - 180 * 86400000).toISOString().split('T')[0];
+      query = query.where('date', '>=', cutoffDate);
+    }
+    const snap = await query.get();
 
     if (!snap.empty) {
       const docs = [];
