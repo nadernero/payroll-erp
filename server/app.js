@@ -106,9 +106,25 @@ for (const [subPath, router] of routes) {
 
 // Quick health check
 app.get(['/api/health', '/health'], (req, res) => {
+  let dbStatus = 'unknown';
+  let dbError = null;
+  let empCount = 0;
+  try {
+    const row = db.prepare('SELECT COUNT(*) as c FROM employees').get();
+    dbStatus = 'connected';
+    empCount = row.c;
+  } catch (e) {
+    dbStatus = 'error';
+    dbError = e.message;
+  }
+
   res.json({
     status: 'online',
     appName: 'نظام إدارة المرتبات وشؤون العاملين | Payroll ERP',
+    node: process.version,
+    dbStatus,
+    dbError,
+    empCount,
     time: new Date().toISOString()
   });
 });
