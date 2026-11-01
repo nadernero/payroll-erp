@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import { pushToSupabase, pushBatchToSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, pushBatchToSupabase, ensureFreshData } from '../firestoreSync.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
   try {
     if (process.env.VERCEL) {
       try {
-        const { ensureTableFresh } = await import('../supabaseSync.js');
+        const { ensureTableFresh } = await import('../firestoreSync.js');
         await ensureTableFresh(db, 'mid_month_expenses', 5000);
       } catch (e) {}
     }

@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import db from '../db.js';
-import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, getLiveSyncStatus, syncDatabase } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, getLiveSyncStatus, syncDatabase } from '../firestoreSync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

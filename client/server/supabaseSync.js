@@ -58,9 +58,8 @@ export async function pushToSupabase(table, row) {
 
   // Resolve remote ID if a natural unique key exists to avoid unique constraint collisions
   try {
-    if (table === 'attendance' && targetRow.employee_code && targetRow.date) {
-      const res = await executeQuery('SELECT id FROM "attendance" WHERE employee_code = $1 AND "date" = $2', [targetRow.employee_code, targetRow.date]);
-      if (res && res.rows.length > 0) targetRow.id = res.rows[0].id;
+    if (table === 'attendance') {
+      delete targetRow.id;
     } else if (table === 'employees' && targetRow.code) {
       const res = await executeQuery('SELECT id FROM "employees" WHERE code = $1', [targetRow.code]);
       if (res && res.rows.length > 0) {
@@ -180,10 +179,10 @@ export async function pushBatchToSupabase(table, rows) {
     conflictCols = ['name'];
   }
 
-  // Filter columns (omit id for payroll_items and mid_month_expenses so serial sequence/remote id isn't conflicted)
+  // Filter columns (omit id for attendance, payroll_items and mid_month_expenses so serial sequence/remote id isn't conflicted)
   const sampleRow = rows[0];
   let cols = Object.keys(sampleRow);
-  if (table === 'payroll_items' || table === 'mid_month_expenses') {
+  if (table === 'attendance' || table === 'payroll_items' || table === 'mid_month_expenses') {
     cols = cols.filter(c => c !== 'id');
   }
 
@@ -201,7 +200,13 @@ export async function pushBatchToSupabase(table, rows) {
     for (const r of chunk) {
       const placeholders = cols.map(() => `$${pIdx++}`).join(', ');
       valueClauses.push(`(${placeholders})`);
-      cols.forEach(c => values.push(r[c] !== undefined ? r[c] : null));
+      cols.forEach(c => {
+        let val = r[c];
+        if (val === undefined || val === null) val = null;
+        else if (typeof val === 'boolean') val = val ? 1 : 0;
+        else if (val instanceof Date) val = val.toISOString();
+        values.push(val);
+      });
     }
 
     const query = updateList.length > 0
@@ -318,23 +323,48 @@ export async function pullFromSupabase(sqliteDb, tableList = null) {
         }
 
         // 3. Insert or update all rows from Supabase into local SQLite
-        const cols = Object.keys(res.rows[0]);
-        const colList = cols.map(c => `"${c}"`).join(', ');
-        const placeholders = cols.map(() => '?').join(', ');
-        const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO "${table}" (${colList}) VALUES (${placeholders})`);
+        if (table === 'attendance') {
+          const cols = Object.keys(res.rows[0]).filter(c => c !== 'id');
+          const colList = cols.map(c => `"${c}"`).join(', ');
+          const placeholders = cols.map(() => '?').join(', ');
+          const updateCols = cols.filter(c => c !== 'employee_code' && c !== 'date');
+          const updateSet = updateCols.map(c => `"${c}" = excluded."${c}"`).join(', ');
+          const stmt = sqliteDb.prepare(`
+            INSERT INTO attendance (${colList}) VALUES (${placeholders})
+            ON CONFLICT(employee_code, date) DO UPDATE SET ${updateSet}
+          `);
 
-        sqliteDb.transaction(() => {
-          for (const row of res.rows) {
-            const values = cols.map(c => {
-              const val = row[c];
-              if (val === undefined || val === null) return null;
-              if (typeof val === 'boolean') return val ? 1 : 0;
-              if (val instanceof Date) return val.toISOString();
-              return val;
-            });
-            stmt.run(...values);
-          }
-        })();
+          sqliteDb.transaction(() => {
+            for (const row of res.rows) {
+              const values = cols.map(c => {
+                const val = row[c];
+                if (val === undefined || val === null) return null;
+                if (typeof val === 'boolean') return val ? 1 : 0;
+                if (val instanceof Date) return val.toISOString();
+                return val;
+              });
+              stmt.run(...values);
+            }
+          })();
+        } else {
+          const cols = Object.keys(res.rows[0]);
+          const colList = cols.map(c => `"${c}"`).join(', ');
+          const placeholders = cols.map(() => '?').join(', ');
+          const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO "${table}" (${colList}) VALUES (${placeholders})`);
+
+          sqliteDb.transaction(() => {
+            for (const row of res.rows) {
+              const values = cols.map(c => {
+                const val = row[c];
+                if (val === undefined || val === null) return null;
+                if (typeof val === 'boolean') return val ? 1 : 0;
+                if (val instanceof Date) return val.toISOString();
+                return val;
+              });
+              stmt.run(...values);
+            }
+          })();
+        }
       } catch (e) {
         console.warn(`[pullFromSupabase] Table ${table} sync warning:`, e.message);
       }
@@ -349,51 +379,42 @@ export async function pullFromSupabase(sqliteDb, tableList = null) {
 }
 
 /**
- * Fast pull for recent / updated attendance from Supabase (under 500ms) with deletion sync
+ * Fast pull for recent / updated attendance from Supabase (under 500ms) without deleting local records
  */
 export async function pullFreshAttendance(sqliteDb) {
   if (!pool) return { success: false, reason: 'No DB pool' };
   try {
     const client = await pool.connect();
-    // Pull any attendance records from the last 7 days for fast lightweight sync
-    const cutoffDate = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+    // Pull any attendance records from the last 30 days for fresh sync
+    const cutoffDate = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
     const res = await client.query('SELECT * FROM "attendance" WHERE "date" >= $1', [cutoffDate]);
 
-    if (res.rows) {
-      // 1. Delete local attendance records in range that no longer exist in Supabase
-      const remoteKeys = new Set(res.rows.map(r => `${r.employee_code}_${r.date}`));
-      try {
-        const localAtt = sqliteDb.prepare('SELECT id, employee_code, date FROM attendance WHERE date >= ?').all(cutoffDate);
-        sqliteDb.transaction(() => {
-          for (const la of localAtt) {
-            if (!remoteKeys.has(`${la.employee_code}_${la.date}`)) {
-              sqliteDb.prepare('DELETE FROM attendance WHERE id = ?').run(la.id);
-            }
-          }
-        })();
-      } catch (attDelErr) {}
+    if (res.rows && res.rows.length > 0) {
+      // Safely insert or update remote attendance into SQLite without overwriting IDs
+      const cols = Object.keys(res.rows[0]).filter(c => c !== 'id');
+      const colList = cols.map(c => `"${c}"`).join(', ');
+      const placeholders = cols.map(() => '?').join(', ');
+      const updateCols = cols.filter(c => c !== 'employee_code' && c !== 'date');
+      const updateSet = updateCols.map(c => `"${c}" = excluded."${c}"`).join(', ');
 
-      // 2. Insert or replace remote attendance
-      if (res.rows.length > 0) {
-        const cols = Object.keys(res.rows[0]);
-        const colList = cols.map(c => `"${c}"`).join(', ');
-        const placeholders = cols.map(() => '?').join(', ');
-        const stmt = sqliteDb.prepare(`INSERT OR REPLACE INTO attendance (${colList}) VALUES (${placeholders})`);
+      const stmt = sqliteDb.prepare(`
+        INSERT INTO attendance (${colList}) VALUES (${placeholders})
+        ON CONFLICT(employee_code, date) DO UPDATE SET ${updateSet}
+      `);
 
-        sqliteDb.transaction(() => {
-          for (const row of res.rows) {
-            const values = cols.map(c => {
-              const val = row[c];
-              if (val === undefined || val === null) return null;
-              if (typeof val === 'boolean') return val ? 1 : 0;
-              if (val instanceof Date) return val.toISOString();
-              return val;
-            });
-            stmt.run(...values);
-          }
-        })();
-        console.log(`⚡ [Supabase Fresh Pull]: Synchronized ${res.rows.length} attendance records`);
-      }
+      sqliteDb.transaction(() => {
+        for (const row of res.rows) {
+          const values = cols.map(c => {
+            const val = row[c];
+            if (val === undefined || val === null) return null;
+            if (typeof val === 'boolean') return val ? 1 : 0;
+            if (val instanceof Date) return val.toISOString();
+            return val;
+          });
+          stmt.run(...values);
+        }
+      })();
+      console.log(`⚡ [Supabase Fresh Pull]: Synchronized ${res.rows.length} attendance records`);
     }
     client.release();
     return { success: true, count: res.rows?.length || 0 };
@@ -560,9 +581,14 @@ export async function syncDatabase(sqliteDb) {
       // 3. Push missing or updated rows from local to remote in high-speed batches
       let rowsToInsert;
       if (table === 'attendance') {
-        const cutoff = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-        // Recent attendance records (last 7 days) + any historical rows missing from remote
-        rowsToInsert = localRows.filter(r => !remoteIds.has(r.id) || (r.date && r.date >= cutoff));
+        let remoteKeys = new Set();
+        try {
+          const attRes = await client.query('SELECT employee_code, "date" FROM "attendance"');
+          remoteKeys = new Set(attRes.rows.map(r => `${r.employee_code}_${r.date}`));
+        } catch (e) {}
+        const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+        // Attendance records missing from remote OR records in the last 30 days
+        rowsToInsert = localRows.filter(r => !remoteKeys.has(`${r.employee_code}_${r.date}`) || (r.date && r.date >= cutoff));
       } else {
         // For all other tables, upsert all local rows so any modifications/edits are propagated
         rowsToInsert = localRows;

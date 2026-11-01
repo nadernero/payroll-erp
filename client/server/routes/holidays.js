@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../firestoreSync.js';
 
 const router = express.Router();
 
@@ -63,6 +63,7 @@ router.post('/', async (req, res) => {
         ON CONFLICT(employee_code, date) DO UPDATE SET
           status = excluded.status,
           is_absent = 0,
+          absence_days = 0,
           is_holiday = 1,
           notes = excluded.notes
       `);
@@ -183,6 +184,7 @@ router.post('/apply-all', (req, res) => {
       ON CONFLICT(employee_code, date) DO UPDATE SET
         status = excluded.status,
         is_absent = 0,
+        absence_days = 0,
         is_holiday = 1,
         notes = excluded.notes
     `);
