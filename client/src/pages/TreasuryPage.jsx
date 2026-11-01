@@ -7398,8 +7398,8 @@ export default function TreasuryPage() {
                   <Cloud className="w-6 h-6 text-emerald-200" />
                 </div>
                 <div>
-                  <h3 className="font-black text-lg">حالة المزامنة السحابية اللحظية (Supabase)</h3>
-                  <p className="text-xs text-emerald-100">فحص وتأكيد الربط الفوري بين الخزينة والسيرفر السحابي</p>
+                  <h3 className="font-black text-lg">حالة المزامنة السحابية اللحظية (Firebase Firestore)</h3>
+                  <p className="text-xs text-emerald-100">فحص وتأكيد الربط الفوري بين الخزينة وسحابة Firebase</p>
                 </div>
               </div>
               <button
@@ -7414,7 +7414,7 @@ export default function TreasuryPage() {
               {supabaseLoading ? (
                 <div className="py-12 text-center text-slate-500 font-bold">
                   <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-emerald-600" />
-                  جاري فحص السجلات سحابياً عبر خادم Supabase...
+                  جاري فحص السجلات سحابياً عبر خادم Firebase...
                 </div>
               ) : supabaseStatus ? (
                 <>

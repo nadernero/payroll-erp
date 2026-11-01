@@ -1,6 +1,6 @@
 import app from './app.js';
 import { getNetworkAddresses } from './routes/system.js';
-import { startAutoSync } from './supabaseSync.js';
+import { startAutoSync } from './firestoreSync.js';
 import db from './db.js';
 import { exec } from 'child_process';
 

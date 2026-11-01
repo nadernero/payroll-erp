@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initDatabase, default as db } from './db.js';
-import { syncDatabase } from './supabaseSync.js';
+import { syncDatabase } from './firestoreSync.js';
 
 import employeesRouter from './routes/employees.js';
 import attendanceRouter from './routes/attendance.js';
@@ -36,7 +36,7 @@ export async function ensureAttendanceFresh() {
   if (now - lastAttendancePull > 30000) { // 30s TTL
     lastAttendancePull = now;
     try {
-      const { pullFreshAttendance } = await import('./supabaseSync.js');
+      const { pullFreshAttendance } = await import('./firestoreSync.js');
       await pullFreshAttendance(db);
     } catch (e) {
       console.warn('Auto pullFreshAttendance warning:', e.message);
@@ -51,7 +51,7 @@ export async function ensureEmployeesFresh() {
   if (now - lastEmployeesPull > 30000) { // 30s TTL
     lastEmployeesPull = now;
     try {
-      const { pullFromSupabase } = await import('./supabaseSync.js');
+      const { pullFromSupabase } = await import('./firestoreSync.js');
       await pullFromSupabase(db, ['employees']);
     } catch (e) {
       console.warn('Auto ensureEmployeesFresh warning:', e.message);
@@ -137,7 +137,7 @@ app.post(['/api/sync/trigger', '/sync/trigger'], async (req, res) => {
 app.all(['/api/sync/pull', '/sync/pull'], async (req, res) => {
   try {
     const isFull = req.query.full === 'true';
-    const { pullFromSupabase, pullFreshAttendance } = await import('./supabaseSync.js');
+    const { pullFromSupabase, pullFreshAttendance } = await import('./firestoreSync.js');
     const result = isFull ? await pullFromSupabase(db) : await pullFreshAttendance(db);
     res.json(result);
   } catch (err) {

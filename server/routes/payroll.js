@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import * as XLSX from 'xlsx';
 import { calculatePayrollItem, calculateEgyptianTaxAnnual } from '../payrollService.js';
-import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, pushBatchToSupabase, ensureFreshData } from '../firestoreSync.js';
 
 const router = express.Router();
 
@@ -11,7 +11,7 @@ router.get('/runs', async (req, res) => {
   try {
     if (process.env.VERCEL) {
       try {
-        const { ensureTableFresh } = await import('../supabaseSync.js');
+        const { ensureTableFresh } = await import('../firestoreSync.js');
         await ensureTableFresh(db, 'payroll_runs', 5000);
       } catch (e) {}
     }
@@ -27,7 +27,7 @@ router.get('/runs/:id', async (req, res) => {
   try {
     if (process.env.VERCEL) {
       try {
-        const { ensureTableFresh } = await import('../supabaseSync.js');
+        const { ensureTableFresh } = await import('../firestoreSync.js');
         await ensureTableFresh(db, 'payroll_runs', 5000);
         await ensureTableFresh(db, 'payroll_items', 5000);
       } catch (e) {}

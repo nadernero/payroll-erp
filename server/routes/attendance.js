@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import { pushToSupabase, pushBatchToSupabase, deleteFromSupabase } from '../supabaseSync.js';
+import { pushToSupabase, pushBatchToSupabase, deleteFromSupabase } from '../firestoreSync.js';
 import { generateAttendanceCardsWorkbook } from '../attendanceExportService.js';
 
 const router = express.Router();

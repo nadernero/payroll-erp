@@ -1,7 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { testDeviceConnection, fetchDeviceAttendances } from '../biometricService.js';
-import { pushToSupabase, pushBatchToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, pushBatchToSupabase, deleteFromSupabase, ensureFreshData } from '../firestoreSync.js';
 
 const router = express.Router();
 

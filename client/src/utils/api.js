@@ -7,7 +7,7 @@ const isLocal = typeof window !== 'undefined' && (
   window.location.hostname.startsWith('172.')
 );
 
-// Cloud API Endpoint (Hosted 24/7 on Vercel with Supabase persistence)
+// Cloud API Endpoint (Hosted 24/7 on Cloud with Firebase Firestore persistence)
 export const CLOUD_API_BASE = 'https://payroll-erp-rho.vercel.app/api';
 
 export const API_BASE = isLocal 

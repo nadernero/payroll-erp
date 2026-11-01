@@ -31,7 +31,7 @@ export default function Header({ activeTab, setActiveTab }) {
 
         <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200/60 font-semibold">
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-          <span>المزامنة السحابية متصلة ولحظية (Supabase Live)</span>
+          <span>المزامنة السحابية متصلة ولحظية (Firebase Firestore Live)</span>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../firestoreSync.js';
 
 const router = express.Router();
 
@@ -9,7 +9,7 @@ router.get('/', async (req, res) => {
   try {
     if (process.env.VERCEL) {
       try {
-        const { ensureTableFresh } = await import('../supabaseSync.js');
+        const { ensureTableFresh } = await import('../firestoreSync.js');
         await ensureTableFresh(db, 'loans', 5000);
       } catch (e) {}
     }

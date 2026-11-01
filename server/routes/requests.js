@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../firestoreSync.js';
 
 const router = express.Router();
 
