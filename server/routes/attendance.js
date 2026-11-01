@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
-import { pushToSupabase, deleteFromSupabase } from '../supabaseSync.js';
+import { pushToSupabase, pushBatchToSupabase, deleteFromSupabase } from '../supabaseSync.js';
 import { generateAttendanceCardsWorkbook } from '../attendanceExportService.js';
 
 const router = express.Router();
@@ -973,6 +973,13 @@ router.post('/bulk-annual-leave', (req, res) => {
 
     leaveTx();
 
+    setImmediate(() => {
+      try {
+        const updatedAtt = db.prepare(`SELECT * FROM attendance WHERE id IN (${targetRecords.map(() => '?').join(',')})`).all(...targetRecords.map(r => r.id));
+        if (updatedAtt.length > 0) pushBatchToSupabase('attendance', updatedAtt).catch(() => {});
+      } catch (e) {}
+    });
+
     res.json({
       success: true,
       message: `تم بنجاح تسجيل إجازة سنوية لعدد ${targetRecords.length} موظف وخصمها من الرصيد السنوي.`
@@ -1048,6 +1055,19 @@ router.post('/bulk-weekly-off', (req, res) => {
       upsertTx();
     }
 
+    setImmediate(() => {
+      try {
+        if (recordIds && recordIds.length > 0) {
+          const updatedAtt = db.prepare(`SELECT * FROM attendance WHERE id IN (${recordIds.map(() => '?').join(',')})`).all(...recordIds);
+          if (updatedAtt.length > 0) pushBatchToSupabase('attendance', updatedAtt).catch(() => {});
+        }
+        if (employeeCodes && employeeCodes.length > 0 && date) {
+          const updatedByCode = db.prepare(`SELECT * FROM attendance WHERE date = ? AND employee_code IN (${employeeCodes.map(() => '?').join(',')})`).all(date, ...employeeCodes);
+          if (updatedByCode.length > 0) pushBatchToSupabase('attendance', updatedByCode).catch(() => {});
+        }
+      } catch (e) {}
+    });
+
     res.json({
       success: true,
       message: `تم بنجاح تسجيل عطلة أسبوعية مدفوعة الأجر لعدد ${count} حركة حضور.`
@@ -1060,7 +1080,11 @@ router.post('/bulk-weekly-off', (req, res) => {
 // 5. Delete specific attendance record by ID
 router.delete('/:id', (req, res) => {
   try {
+    const existing = db.prepare('SELECT employee_code, date FROM attendance WHERE id = ?').get(req.params.id);
     db.prepare('DELETE FROM attendance WHERE id = ?').run(req.params.id);
+    if (existing) {
+      deleteFromSupabase('attendance', { employee_code: existing.employee_code, date: existing.date }).catch(() => {});
+    }
     res.json({ success: true, message: 'تم حذف حركة الحضور بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1259,6 +1283,12 @@ router.post('/import/confirm', (req, res) => {
       return res.status(400).json({ error: 'لا توجد بيانات حضور لتأكيدها' });
     }
 
+    // Preload employees map to resolve employee_id, name, department if needed
+    const empMap = new Map();
+    db.prepare('SELECT id, code, name, department FROM employees').all().forEach(e => {
+      empMap.set(String(e.code).trim(), e);
+    });
+
     const stmt = db.prepare(`
       INSERT INTO attendance (
         employee_id, employee_code, employee_name, department, date, day_name,
@@ -1283,15 +1313,24 @@ router.post('/import/confirm', (req, res) => {
     `);
 
     let count = 0;
+    const savedItems = [];
+
     const runAll = db.transaction(() => {
       items.forEach(item => {
-        if (!item.employee_id || !item.date) return;
+        const code = String(item.employee_code || '').trim();
+        const emp = empMap.get(code);
+        const empId = item.employee_id || (emp ? emp.id : null);
+        if (!empId || !item.date) return;
+
+        const empName = item.employee_name || (emp ? emp.name : 'موظف');
+        const dept = item.department || (emp ? emp.department : '');
         const otDays = Number(item.overtime_days) || 0;
-        stmt.run({
-          employee_id: item.employee_id,
-          employee_code: item.employee_code,
-          employee_name: item.employee_name,
-          department: item.department || '',
+
+        const rowData = {
+          employee_id: empId,
+          employee_code: code,
+          employee_name: empName,
+          department: dept,
           date: item.date,
           day_name: item.day_name || '',
           status: item.status || 'حاضر',
@@ -1304,13 +1343,22 @@ router.post('/import/confirm', (req, res) => {
           is_absent: item.is_absent ? 1 : 0,
           is_annual_leave: item.is_annual_leave ? 1 : 0,
           is_overnight: item.is_overnight ? 1 : 0,
-          notes: ''
-        });
+          notes: item.notes || ''
+        };
+
+        stmt.run(rowData);
+        savedItems.push(rowData);
         count++;
       });
     });
 
     runAll();
+
+    // Immediately push newly imported attendance records to Supabase in batch
+    if (savedItems.length > 0) {
+      pushBatchToSupabase('attendance', savedItems).catch(e => console.warn('[attendance import pushBatch warning]:', e.message));
+    }
+
     res.json({ success: true, message: `تم حفظ ${count} سجل حضور بنجاح!` });
   } catch (error) {
     res.status(500).json({ error: error.message });
