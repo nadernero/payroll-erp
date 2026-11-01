@@ -28,3 +28,7 @@ Thumbs.db
 .vscode/
 .idea/
 .firebase/
+
+# Firebase Service Account
+serviceAccountKey.json
+*serviceAccountKey*.json

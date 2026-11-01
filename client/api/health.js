@@ -1,8 +1,12 @@
+import app from '../server/app.js';
+
 export default function handler(req, res) {
-  res.setHeader('Content-Type', 'application/json');
-  res.status(200).json({
-    status: 'online',
-    appName: 'نظام إدارة المرتبات وشؤون العاملين | Payroll ERP',
-    time: new Date().toISOString()
-  });
+  try {
+    app(req, res);
+  } catch (err) {
+    console.error('[Vercel Handler Error]:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message, stack: err.stack });
+    }
+  }
 }

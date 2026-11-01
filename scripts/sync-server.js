@@ -19,6 +19,14 @@ if (fs.existsSync(serverSrc)) {
   console.log('✓ Synced server/ to client/server/');
 }
 
+// Sync api/ -> client/api/
+const apiSrc = path.join(root, 'api');
+const apiDest = path.join(root, 'client', 'api');
+if (fs.existsSync(apiSrc)) {
+  fs.cpSync(apiSrc, apiDest, { recursive: true });
+  console.log('✓ Synced api/ to client/api/');
+}
+
 // Checkpoint WAL in data/payroll.db so the main file contains all latest commits
 if (fs.existsSync(dataSrc)) {
   try {
