@@ -37,6 +37,39 @@ export function formatExcelTime(val) {
   return str;
 }
 
+
+// Helper to convert Excel date (serial number, DD/MM/YYYY, YYYY-MM-DD) to standardized YYYY-MM-DD
+export function formatExcelDate(rawDate) {
+  if (rawDate === null || rawDate === undefined || rawDate === '') return '';
+  if (typeof rawDate === 'number') {
+    // Excel serial number (days since 1899-12-30)
+    const utcDays = Math.floor(rawDate - 25569);
+    const dateObj = new Date(utcDays * 86400 * 1000);
+    const y = dateObj.getUTCFullYear();
+    const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(dateObj.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(rawDate).trim().replace(/\//g, '-').replace(/\./g, '-');
+  const parts = str.split('-');
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      // YYYY-MM-DD or YYYY-M-D
+      const y = parts[0];
+      const m = parts[1].padStart(2, '0');
+      const d = parts[2].padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    } else if (parts[2].length === 4) {
+      // DD-MM-YYYY or D-M-YYYY
+      const d = parts[0].padStart(2, '0');
+      const m = parts[1].padStart(2, '0');
+      const y = parts[2];
+      return `${y}-${m}-${d}`;
+    }
+  }
+  return str;
+}
+
 // Helper to parse delay minutes
 export function formatDelayMinutes(val) {
   if (!val) return 0;
@@ -1184,8 +1217,12 @@ router.post('/import/preview', upload.single('file'), (req, res) => {
     const annualIdx = findCol(['سنوي']);
 
     const employeesMap = new Map();
+    const empNumMap = new Map();
     db.prepare('SELECT id, code, name, department, annual_leave_balance FROM employees').all().forEach(e => {
-      employeesMap.set(String(e.code).trim(), e);
+      const cStr = String(e.code).trim();
+      employeesMap.set(cStr, e);
+      const cNum = parseInt(cStr, 10);
+      if (!isNaN(cNum)) empNumMap.set(cNum, e);
     });
 
     // Approved leaves for cross-checking
@@ -1194,18 +1231,13 @@ router.post('/import/preview', upload.single('file'), (req, res) => {
     const parsed = [];
     dataRows.forEach(row => {
       if (!row || row.length === 0) return;
-      const code = codeIdx !== -1 ? String(row[codeIdx] || '').trim() : '';
-      if (!code) return;
+      const rawCode = codeIdx !== -1 ? String(row[codeIdx] || '').trim() : '';
+      if (!rawCode) return;
 
-      const emp = employeesMap.get(code);
-      let rawDate = dateIdx !== -1 ? row[dateIdx] : '';
-      let dateStr = '';
-      if (typeof rawDate === 'number') {
-        const dateObj = new Date((rawDate - (25567 + 2)) * 86400 * 1000);
-        dateStr = dateObj.toISOString().split('T')[0];
-      } else if (rawDate) {
-        dateStr = String(rawDate).trim().replace(/\//g, '-');
-      }
+      const rawNum = parseInt(rawCode, 10);
+      const emp = employeesMap.get(rawCode) || (!isNaN(rawNum) ? empNumMap.get(rawNum) : null);
+      const code = emp ? emp.code : rawCode;
+      const dateStr = dateIdx !== -1 ? formatExcelDate(row[dateIdx]) : '';
 
       const formattedIn = inIdx !== -1 ? formatExcelTime(row[inIdx]) : '';
       const formattedOut = outIdx !== -1 ? formatExcelTime(row[outIdx]) : '';
@@ -1276,17 +1308,21 @@ router.post('/import/preview', upload.single('file'), (req, res) => {
 });
 
 // 8. Confirm Attendance Import
-router.post('/import/confirm', (req, res) => {
+router.post('/import/confirm', async (req, res) => {
   try {
     const { items } = req.body;
-    if (!items || !Array.isArray(items)) {
+    if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'لا توجد بيانات حضور لتأكيدها' });
     }
 
-    // Preload employees map to resolve employee_id, name, department if needed
+    // Preload employees map with string and numeric code resolution
     const empMap = new Map();
+    const empNumMap = new Map();
     db.prepare('SELECT id, code, name, department FROM employees').all().forEach(e => {
-      empMap.set(String(e.code).trim(), e);
+      const cStr = String(e.code).trim();
+      empMap.set(cStr, e);
+      const cNum = parseInt(cStr, 10);
+      if (!isNaN(cNum)) empNumMap.set(cNum, e);
     });
 
     const stmt = db.prepare(`
@@ -1301,15 +1337,16 @@ router.post('/import/confirm', (req, res) => {
       )
       ON CONFLICT(employee_code, date) DO UPDATE SET
         status = excluded.status,
-        check_in = excluded.check_in,
-        check_out = excluded.check_out,
+        check_in = CASE WHEN excluded.check_in IS NOT NULL AND excluded.check_in != '' THEN excluded.check_in ELSE attendance.check_in END,
+        check_out = CASE WHEN excluded.check_out IS NOT NULL AND excluded.check_out != '' THEN excluded.check_out ELSE attendance.check_out END,
         late_minutes = excluded.late_minutes,
         early_leave_minutes = excluded.early_leave_minutes,
         overtime_hours = excluded.overtime_hours,
         overtime_days = excluded.overtime_days,
         is_absent = excluded.is_absent,
         is_annual_leave = excluded.is_annual_leave,
-        is_overnight = excluded.is_overnight
+        is_overnight = excluded.is_overnight,
+        notes = CASE WHEN excluded.notes != '' THEN excluded.notes ELSE attendance.notes END
     `);
 
     let count = 0;
@@ -1317,21 +1354,24 @@ router.post('/import/confirm', (req, res) => {
 
     const runAll = db.transaction(() => {
       items.forEach(item => {
-        const code = String(item.employee_code || '').trim();
-        const emp = empMap.get(code);
+        const rawCode = String(item.employee_code || '').trim();
+        const rawNum = parseInt(rawCode, 10);
+        const emp = empMap.get(rawCode) || (!isNaN(rawNum) ? empNumMap.get(rawNum) : null);
         const empId = item.employee_id || (emp ? emp.id : null);
-        if (!empId || !item.date) return;
+        const dateStr = formatExcelDate(item.date);
+        if (!empId || !dateStr) return;
 
+        const empCode = emp ? emp.code : rawCode;
         const empName = item.employee_name || (emp ? emp.name : 'موظف');
         const dept = item.department || (emp ? emp.department : '');
         const otDays = Number(item.overtime_days) || 0;
 
         const rowData = {
           employee_id: empId,
-          employee_code: code,
+          employee_code: empCode,
           employee_name: empName,
           department: dept,
-          date: item.date,
+          date: dateStr,
           day_name: item.day_name || '',
           status: item.status || 'حاضر',
           check_in: item.check_in || '',
@@ -1354,12 +1394,16 @@ router.post('/import/confirm', (req, res) => {
 
     runAll();
 
-    // Immediately push newly imported attendance records to Supabase in batch
+    // Reliably push newly imported attendance records to Firestore in batch and wait for it
     if (savedItems.length > 0) {
-      pushBatchToSupabase('attendance', savedItems).catch(e => console.warn('[attendance import pushBatch warning]:', e.message));
+      try {
+        await pushBatchToSupabase('attendance', savedItems);
+      } catch (e) {
+        console.warn('[attendance import pushBatch warning]:', e.message);
+      }
     }
 
-    res.json({ success: true, message: `تم حفظ ${count} سجل حضور بنجاح!` });
+    res.json({ success: true, message: `تم حفظ ${count} سجل حضور بنجاح!`, count, sampleDate: savedItems[0]?.date });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

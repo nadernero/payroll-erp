@@ -407,15 +407,36 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     if (!importPreview || !importPreview.items) return;
     try {
       setIsUploading(true);
+      const validItems = importPreview.items.filter(p => p.valid !== false);
+      if (validItems.length === 0) {
+        alert('لا توجد سجلات صالحة للاستيراد');
+        return;
+      }
+
       const res = await fetchJson('/attendance/import/confirm', {
         method: 'POST',
-        body: JSON.stringify({ items: importPreview.items })
+        body: JSON.stringify({ items: validItems })
       });
+
+      // Auto-detect year and month from the imported batch to automatically switch view to the imported period
+      const dateToDetect = res.sampleDate || validItems.find(i => i.date)?.date;
+      if (dateToDetect) {
+        const parts = String(dateToDetect).split('-');
+        if (parts.length >= 2) {
+          const detectedYear = Number(parts[0]);
+          const detectedMonth = Number(parts[1]);
+          if (detectedYear && detectedMonth) {
+            setYear(detectedYear);
+            setMonth(detectedMonth);
+          }
+        }
+      }
+
       setImportMessage(res.message);
       setImportPreview(null);
       setImportFile(null);
-      loadData();
-      setTimeout(() => setShowImportModal(false), 2000);
+      setShowImportModal(false);
+      await loadData();
     } catch (err) {
       alert('خطأ أثناء تأكيد الحضور: ' + err.message);
     } finally {
