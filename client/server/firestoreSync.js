@@ -34,7 +34,11 @@ function initFirebaseAdmin() {
     } else if (fs.existsSync(serverKeyPath)) {
       certData = JSON.parse(fs.readFileSync(serverKeyPath, 'utf8'));
     } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      certData = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      certData = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+        : process.env.FIREBASE_SERVICE_ACCOUNT;
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT_B64) {
+      certData = JSON.parse(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8'));
     }
 
     if (certData) {
@@ -50,15 +54,20 @@ function initFirebaseAdmin() {
       return firestore;
     }
 
-    // 2. Fallback to default application credentials
-    const projectId = process.env.FIREBASE_PROJECT_ID || 'company-payroll-erp-2026';
-    if (getApps().length === 0) {
-      initializeApp({ projectId });
+    // 2. Fallback to GCP default credentials ONLY if running in Google Cloud
+    if (process.env.K_SERVICE || process.env.FUNCTION_NAME || process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      const projectId = process.env.FIREBASE_PROJECT_ID || 'company-payroll-erp-2026';
+      if (getApps().length === 0) {
+        initializeApp({ projectId });
+      }
+      firestore = getFirestore();
+      isInitialized = true;
+      return firestore;
     }
-    firestore = getFirestore();
-    isInitialized = true;
-    console.log(`🔥 [Firestore Sync]: Initialized with default credentials for project [${projectId}]`);
-    return firestore;
+
+    firestore = null;
+    isInitialized = false;
+    return null;
   } catch (err) {
     console.warn(`⚠️ [Firestore Sync Init Notice]: ${err.message}`);
     console.warn('👉 لتفعيل المزامنة السحابية مع Firebase Firestore، يرجى وضع ملف serviceAccountKey.json في مجلد المشروع.');
