@@ -1,12 +1,10 @@
-import app, { ensureAttendanceFresh } from '../server/app.js';
+import app from '../server/app.js';
 
 export default async function handler(req, res) {
   try {
-    if (ensureAttendanceFresh) {
-      await ensureAttendanceFresh();
-    }
+    return app(req, res);
   } catch (e) {
-    console.warn('ensureAttendanceFresh notice:', e.message);
+    console.error('[Vercel Serverless Handler Error]:', e);
+    return res.status(500).json({ error: e.message, stack: e.stack });
   }
-  return app(req, res);
 }
