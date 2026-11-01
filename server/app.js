@@ -146,9 +146,13 @@ app.all(['/api/sync/pull', '/sync/pull'], async (req, res) => {
 });
 
 // Serve frontend build if present
-const clientDist = path.join(__dirname, '..', 'client', 'dist');
-if (fs.existsSync(clientDist)) {
-  app.use(express.static(clientDist, {
+let effectiveDist = path.join(__dirname, '..', 'client', 'dist');
+if (!fs.existsSync(effectiveDist) || !fs.existsSync(path.join(effectiveDist, 'index.html'))) {
+  effectiveDist = path.join(__dirname, '..', 'dist');
+}
+
+if (fs.existsSync(effectiveDist) && fs.existsSync(path.join(effectiveDist, 'index.html'))) {
+  app.use(express.static(effectiveDist, {
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('.html')) {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -163,9 +167,26 @@ if (fs.existsSync(clientDist)) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
-      return res.sendFile(path.join(clientDist, 'index.html'));
+      return res.sendFile(path.join(effectiveDist, 'index.html'));
     }
     next();
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.send(`
+      <!doctype html>
+      <html lang="ar" dir="rtl">
+        <head><meta charset="utf-8"><title>تنبيه - ERP</title></head>
+        <body style="font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+          <div style="background: #1e293b; padding: 40px; border-radius: 20px; text-align: center; max-width: 500px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid #334155;">
+            <h2 style="color: #38bdf8; margin-top: 0;">🚀 خادم النظام يعمل بنجاح!</h2>
+            <p style="color: #94a3b8; font-size: 14px;">ولكن لم يتم تجهيز ملفات واجهة المستخدم (Build) بعد.</p>
+            <p style="color: #cbd5e1; font-size: 13px;">يرجى تشغيل الأمر التالي في موجه الأوامر:</p>
+            <code style="background: #0f172a; color: #4ade80; padding: 10px 20px; border-radius: 8px; font-size: 15px; display: inline-block; margin: 10px 0;">npm run build</code>
+          </div>
+        </body>
+      </html>
+    `);
   });
 }
 
