@@ -2,13 +2,20 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import { pushToSupabase, pushBatchToSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. Get expenses for specific month and year
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (process.env.VERCEL) {
+      try {
+        const { ensureTableFresh } = await import('../supabaseSync.js');
+        await ensureTableFresh(db, 'mid_month_expenses', 5000);
+      } catch (e) {}
+    }
     const year = Number(req.query.year) || new Date().getFullYear();
     const month = Number(req.query.month) || (new Date().getMonth() + 1);
 
@@ -52,7 +59,7 @@ router.get('/', (req, res) => {
 });
 
 // 2. Save / update employee expenses
-router.post('/save', (req, res) => {
+router.post('/save', async (req, res) => {
   try {
     const { year, month, items } = req.body;
     if (!year || !month || !items || !Array.isArray(items)) {
@@ -95,6 +102,16 @@ router.post('/save', (req, res) => {
     });
 
     runSave();
+
+    const savedRows = db.prepare('SELECT * FROM mid_month_expenses WHERE year = ? AND month = ?').all(Number(year), Number(month));
+    try {
+      if (savedRows.length > 0) {
+        await pushBatchToSupabase('mid_month_expenses', savedRows);
+      }
+    } catch (e) {
+      console.warn('Supabase expenses batch push notice:', e.message);
+    }
+
     res.json({ success: true, message: 'تم حفظ المصروفات وربطها بالموظفين وتحديث الراتب بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });

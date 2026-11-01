@@ -19,6 +19,19 @@ if (fs.existsSync(serverSrc)) {
   console.log('✓ Synced server/ to client/server/');
 }
 
+// Checkpoint WAL in data/payroll.db so the main file contains all latest commits
+if (fs.existsSync(dataSrc)) {
+  try {
+    const { default: BetterSqlite3 } = await import('better-sqlite3');
+    const localDb = new BetterSqlite3(dataSrc);
+    localDb.pragma('wal_checkpoint(TRUNCATE)');
+    localDb.close();
+    console.log('✓ Checkpointed SQLite WAL journal to data/payroll.db');
+  } catch (cpErr) {
+    console.warn('Notice: checkpoint skipped:', cpErr.message);
+  }
+}
+
 // Sync data/payroll.db -> client/data/payroll.db
 if (!fs.existsSync(dataDestDir)) {
   fs.mkdirSync(dataDestDir, { recursive: true });

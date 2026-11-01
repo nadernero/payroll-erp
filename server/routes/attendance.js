@@ -2,6 +2,8 @@ import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
+import { pushToSupabase, deleteFromSupabase } from '../supabaseSync.js';
+import { generateAttendanceCardsWorkbook } from '../attendanceExportService.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -54,6 +56,32 @@ export function formatDelayMinutes(val) {
   return 0;
 }
 
+// Unified helper to determine true absence days (0, 0.5, 1, etc.)
+export function getAbsenceValue(rec) {
+  if (!rec) return 0;
+  // Official holidays and weekly off days are never absences
+  if (rec.is_holiday === 1 || (rec.status && (rec.status.includes('رسمية') || rec.status.includes('أسبوعية')))) {
+    return 0;
+  }
+  const statusStr = String(rec.status || '');
+  const isExplicitAbsent = rec.is_absent === 1 || statusStr.includes('غياب');
+
+  if (isExplicitAbsent) {
+    if (rec.absence_days === 0.5 || statusStr.includes('نصف') || statusStr.includes('0.5')) {
+      return 0.5;
+    }
+    const num = Number(rec.absence_days);
+    return num > 0 ? num : 1.0;
+  }
+
+  const num = Number(rec.absence_days);
+  if (num > 0 && num < 1) {
+    return num; // partial deduction like 0.5 day
+  }
+
+  return 0;
+}
+
 // 1. Get attendance with filters and auto-linked leaves check, expanding calendar days so no day is missing
 router.get('/', async (req, res) => {
   try {
@@ -70,7 +98,7 @@ router.get('/', async (req, res) => {
         e.annual_leave_balance,
         COALESCE(a.overtime_days, CASE WHEN a.overtime_hours > 0 THEN ROUND(a.overtime_hours / 8.0, 1) ELSE 0 END) as overtime_days_calculated
       FROM attendance a
-      JOIN employees e ON a.employee_id = e.id
+      LEFT JOIN employees e ON (a.employee_id = e.id OR a.employee_code = e.code)
       WHERE 1=1
     `;
     const params = [];
@@ -122,7 +150,8 @@ router.get('/', async (req, res) => {
       params.push(department);
     }
 
-    query += ' ORDER BY a.date DESC, CAST(a.employee_code AS INTEGER) ASC LIMIT 2500';
+    const sortDir = req.query.sort === 'desc' ? 'DESC' : 'ASC';
+    query += ` ORDER BY a.date ${sortDir}, CAST(a.employee_code AS INTEGER) ASC LIMIT 2500`;
     const records = db.prepare(query).all(...params);
 
     // Fetch approved leaves map to cross check
@@ -166,21 +195,27 @@ router.get('/', async (req, res) => {
       let isAnnual = rec.is_annual_leave;
       let isHoliday = rec.is_holiday === 1 || !!holidayName;
 
+      const hasPunch = !!(rec.check_in && String(rec.check_in).trim() !== '') ||
+                       !!(rec.check_out && String(rec.check_out).trim() !== '');
+
       if (matchingLeave) {
         finalStatus = `إجازة ${matchingLeave.leave_type}`;
         if (matchingLeave.leave_type === 'سنوية') isAnnual = 1;
-      } else if (holidayName && (!rec.status || rec.status === 'حاضر' && !rec.check_in && !rec.check_out)) {
+      } else if (holidayName && !hasPunch) {
         finalStatus = `إجازة رسمية (${holidayName})`;
+        isHoliday = true;
+      } else if (rec.is_holiday === 1 && !hasPunch) {
+        finalStatus = `إجازة رسمية`;
+        isHoliday = true;
       }
 
       const d = new Date(rec.date);
       const dayName = rec.day_name || (isNaN(d.getDay()) ? '' : arabicDays[d.getDay()]);
-      const isWeekend = (dayName === 'الجمعة' || dayName === 'الأحد');
+      const isWeekend = (dayName === 'الجمعة' || dayName === 'الأحد') || (finalStatus && finalStatus.includes('أسبوعية'));
 
-      const hasPunch = !!rec.check_in || !!rec.check_out;
-      const isAbsent = rec.is_absent === 1 || (rec.absence_days > 0) || (finalStatus && finalStatus.includes('غياب'));
-      const isLeave = isAnnual === 1 || (finalStatus && (finalStatus.includes('إجازة') || finalStatus.includes('مأمورية')));
       const isOfficialHoliday = isHoliday || (finalStatus && finalStatus.includes('رسمية'));
+      const isLeave = isAnnual === 1 || (finalStatus && (finalStatus.includes('إجازة') || finalStatus.includes('مأمورية')));
+      const isAbsent = !isOfficialHoliday && !isWeekend && (rec.is_absent === 1 || (rec.absence_days > 0) || (finalStatus && finalStatus.includes('غياب')));
 
       const isPendingDecision = !hasPunch && !isAbsent && !isLeave && !isOfficialHoliday && !isWeekend;
 
@@ -318,7 +353,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. Get monthly attendance summary per employee (in days for payroll)
+// 2. Get monthly attendance summary per employee (in days for payroll, including paid holidays & weekends)
 router.get('/summary', async (req, res) => {
   try {
     if (process.env.VERCEL) {
@@ -332,11 +367,13 @@ router.get('/summary', async (req, res) => {
       return res.status(400).json({ error: 'السنة والشهر مطلوبان' });
     }
 
-    const formattedMonth = `${year}-${String(month).padStart(2, '0')}`;
-    const startOfYear = `${year}-01-01`;
-    const endOfYear = `${year}-12-31`;
+    const y = Number(year);
+    const m = Number(month);
+    const formattedMonth = `${y}-${String(m).padStart(2, '0')}`;
+    const startOfYear = `${y}-01-01`;
+    const endOfYear = `${y}-12-31`;
 
-    // 1. Approved leaves taken this year
+    // 1. Approved leaves taken this year (for remaining balance)
     const leavesTaken = db.prepare(`
       SELECT employee_id, SUM(days_count) as total_days
       FROM leaves
@@ -356,36 +393,141 @@ router.get('/summary', async (req, res) => {
     const loanMap = new Map();
     loansRemaining.forEach(l => loanMap.set(l.employee_id, l.total_remaining));
 
-    const summary = db.prepare(`
-      SELECT 
-        e.id as employee_id,
-        e.code as employee_code,
-        e.name as employee_name,
-        e.department,
-        e.annual_leave_balance,
-        COUNT(CASE WHEN a.status = 'حاضر' OR (a.check_in IS NOT NULL AND a.check_in != '') THEN 1 END) as present_days,
-        SUM(CASE 
-          WHEN (a.is_absent = 1 OR a.status LIKE '%غياب%') THEN COALESCE(a.absence_days, 1.0)
-          ELSE 0.0 
-        END) as absent_days,
-        SUM(COALESCE(a.overtime_days, CASE WHEN a.overtime_hours > 0 THEN ROUND(a.overtime_hours / 8.0, 1) ELSE 0 END)) as total_overtime_days,
-        COUNT(CASE WHEN a.is_annual_leave = 1 OR a.status LIKE '%سنوي%' THEN 1 END) as annual_leave_days,
-        COUNT(CASE WHEN a.is_overnight = 1 THEN 1 END) as overnight_days
-      FROM employees e
-      LEFT JOIN attendance a ON e.code = a.employee_code AND strftime('%Y-%m', a.date) = ?
-      GROUP BY e.id
-      ORDER BY e.seq ASC, CAST(e.code AS INTEGER) ASC
-    `).all(formattedMonth);
+    // 3. Official holidays in this month
+    const officialHolidays = db.prepare(`
+      SELECT holiday_date, name FROM official_holidays
+      WHERE holiday_date LIKE ?
+    `).all(`${formattedMonth}%`);
+    const holidayDates = new Set(officialHolidays.map(h => h.holiday_date));
 
-    const enriched = summary.map(row => {
-      const taken = leavesMap.get(row.employee_id) || 0;
-      const remLeaves = Math.max(0, (row.annual_leave_balance || 21) - taken);
-      const remLoan = loanMap.get(row.employee_id) || 0;
+    // 4. Calculate calendar days and Friday/Sunday weekends in this month
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const weekendDates = new Set();
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(y, m - 1, day);
+      const dStr = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      if (d.getDay() === 5 || d.getDay() === 0) { // الجمعة أو الأحد
+        weekendDates.add(dStr);
+      }
+    }
+
+    // 5. Active Employees
+    const employees = db.prepare(`
+      SELECT id, code, name, department, annual_leave_balance 
+      FROM employees 
+      WHERE status = 'active'
+      ORDER BY seq ASC, CAST(code AS INTEGER) ASC
+    `).all();
+
+    // 6. Attendance records for this month
+    const attRecords = db.prepare(`
+      SELECT * FROM attendance WHERE date LIKE ?
+    `).all(`${formattedMonth}%`);
+    const empAttMap = new Map();
+    attRecords.forEach(r => {
+      const c = String(r.employee_code).trim();
+      if (!empAttMap.has(c)) empAttMap.set(c, new Map());
+      empAttMap.get(c).set(r.date, r);
+    });
+
+    // 7. Approved leaves for this month
+    const monthStart = `${formattedMonth}-01`;
+    const monthEnd = `${formattedMonth}-${String(daysInMonth).padStart(2, '0')}`;
+    const monthLeaves = db.prepare(`
+      SELECT employee_id, start_date, end_date, leave_type
+      FROM leaves
+      WHERE status = 'approved'
+        AND ((start_date BETWEEN ? AND ?) OR (end_date BETWEEN ? AND ?))
+    `).all(monthStart, monthEnd, monthStart, monthEnd);
+
+    // 8. Enrich with full days metrics (counting actual attendance, official holidays, and weekends as paid days)
+    const enriched = employees.map(emp => {
+      const empCode = String(emp.code).trim();
+      const recMap = empAttMap.get(empCode) || new Map();
+
+      let actualPresent = 0;
+      let weekends = 0;
+      let officialHols = 0;
+      let annualLeaves = 0;
+      let absentDays = 0;
+      let totalOt = 0;
+      let overnight = 0;
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dStr = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const isWk = weekendDates.has(dStr);
+        const isHol = holidayDates.has(dStr);
+        const rec = recMap.get(dStr);
+
+        const matchingLeave = monthLeaves.find(l =>
+          l.employee_id === emp.id && dStr >= l.start_date && dStr <= l.end_date
+        );
+
+        if (rec) {
+          const hasPunch = !!(rec.check_in && String(rec.check_in).trim() !== '') ||
+                           !!(rec.check_out && String(rec.check_out).trim() !== '') ||
+                           (rec.status && rec.status.includes('حاضر'));
+          const absVal = getAbsenceValue(rec);
+
+          if (rec.overtime_days > 0) {
+            totalOt += rec.overtime_days;
+          } else if (rec.overtime_hours > 0) {
+            totalOt += Math.round((rec.overtime_hours / 8.0) * 10) / 10;
+          }
+
+          if (rec.is_overnight === 1) overnight++;
+
+          if (hasPunch && absVal === 0.5) {
+            actualPresent += 0.5;
+            absentDays += 0.5;
+          } else if (hasPunch) {
+            actualPresent++;
+          } else if (matchingLeave) {
+            if (matchingLeave.leave_type === 'سنوية') annualLeaves++;
+            else officialHols++;
+          } else if (isHol || rec.is_holiday === 1 || (rec.status && rec.status.includes('رسمية'))) {
+            officialHols++;
+          } else if (isWk || (rec.status && rec.status.includes('أسبوعية'))) {
+            weekends++;
+          } else if (rec.is_annual_leave === 1 || (rec.status && rec.status.includes('سنوي'))) {
+            annualLeaves++;
+          } else if (absVal > 0) {
+            absentDays += absVal;
+          }
+        } else {
+          // No punch recorded on this day
+          if (matchingLeave) {
+            if (matchingLeave.leave_type === 'سنوية') annualLeaves++;
+            else officialHols++;
+          } else if (isHol) {
+            officialHols++;
+          } else if (isWk) {
+            weekends++;
+          }
+        }
+      }
+
+      // Total Paid Attendance Days: Month is calculated as 30 days minus absence days
+      const paidDays = Math.max(0, 30 - absentDays);
+
+      const taken = leavesMap.get(emp.id) || 0;
+      const remLeaves = Math.max(0, (emp.annual_leave_balance || 21) - taken);
+      const remLoan = loanMap.get(emp.id) || 0;
 
       return {
-        ...row,
-        absent_days: row.absent_days || 0,
-        total_overtime_days: row.total_overtime_days || 0,
+        employee_id: emp.id,
+        employee_code: emp.code,
+        employee_name: emp.name,
+        department: emp.department || 'عام',
+        annual_leave_balance: emp.annual_leave_balance,
+        present_days: paidDays, // المحتسب والمدفوع شاملاً العطلات والإجازات الرسمية
+        actual_present_days: actualPresent, // الفعلي بالبصمة
+        weekend_days: weekends, // عطلات أسبوعية (الجمعة)
+        official_holiday_days: officialHols, // إجازات رسمية
+        annual_leave_days: annualLeaves, // إجازات سنوية
+        absent_days: absentDays, // أيام الغياب
+        total_overtime_days: totalOt,
+        overnight_days: overnight,
         remaining_annual_leave_balance: remLeaves,
         remaining_loan_balance: remLoan
       };
@@ -397,8 +539,43 @@ router.get('/summary', async (req, res) => {
   }
 });
 
+// 2.1 Export Styled Colored Attendance Cards to Excel (Single or Multiple Employees)
+router.all('/export/cards/excel', async (req, res) => {
+  try {
+    const params = req.method === 'POST' ? req.body : req.query;
+    let { year, month, startDate, endDate, employeeCodes, department } = params;
+
+    if (typeof employeeCodes === 'string' && employeeCodes.includes(',')) {
+      employeeCodes = employeeCodes.split(',').map(c => c.trim()).filter(Boolean);
+    } else if (employeeCodes && !Array.isArray(employeeCodes) && employeeCodes !== 'all') {
+      employeeCodes = [String(employeeCodes).trim()];
+    }
+
+    const workbook = await generateAttendanceCardsWorkbook({
+      year: year ? Number(year) : undefined,
+      month: month ? Number(month) : undefined,
+      startDate,
+      endDate,
+      employeeCodes,
+      department
+    });
+
+    const fileSuffix = year && month ? `${year}_${month}` : (startDate ? `${startDate}_${endDate}` : 'cards');
+    const filename = `كروت_الحضور_والانصراف_${fileSuffix}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('[Export Attendance Cards Error]:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 3. Record / update single day attendance
-router.post('/record', (req, res) => {
+router.post('/record', async (req, res) => {
   try {
     const {
       employee_code, date, day_name, status, check_in, check_out,
@@ -473,14 +650,19 @@ router.post('/record', (req, res) => {
       notes: notes || ''
     });
 
-    res.json({ success: true, message: 'تم حفظ تسجيل حركة الحضور بنجاح' });
+    const saved = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?').get(employee_code, date);
+    if (saved) {
+      pushToSupabase('attendance', saved).catch(e => console.warn('[pushToSupabase warning]:', e.message));
+    }
+
+    res.json({ success: true, message: 'تم حفظ تسجيل حركة الحضور بنجاح', data: saved });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // 4. Update specific attendance record by ID
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const {
       status, check_in, check_out, late_minutes,
@@ -497,7 +679,10 @@ router.put('/:id', (req, res) => {
     let isAbsentVal = is_absent !== undefined ? (is_absent ? 1 : 0) : existing.is_absent;
     if (status && status.includes('غياب')) {
       isAbsentVal = 1;
-      if (absDays <= 0) absDays = 1.0;
+      if (absDays <= 0) absDays = (status.includes('نصف') || status.includes('0.5')) ? 0.5 : 1.0;
+    } else if (status === 'حاضر' || (check_in && !status?.includes('غياب'))) {
+      if (absDays !== 0.5) absDays = 0;
+      isAbsentVal = 0;
     }
 
     db.prepare(`
@@ -529,14 +714,19 @@ router.put('/:id', (req, res) => {
       req.params.id
     );
 
-    res.json({ success: true, message: 'تم تحديث سجل الحضور بنجاح' });
+    const saved = db.prepare('SELECT * FROM attendance WHERE id = ?').get(req.params.id);
+    if (saved) {
+      pushToSupabase('attendance', saved).catch(e => console.warn('[pushToSupabase warning]:', e.message));
+    }
+
+    res.json({ success: true, message: 'تم تحديث سجل الحضور بنجاح', data: saved });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // 4.1 Quick decision on missing/unexcused or weekly-off days (Upsert)
-router.post('/quick-decision', (req, res) => {
+router.post('/quick-decision', async (req, res) => {
   try {
     const { employee_code, date, decisionType, notes } = req.body;
     if (!employee_code || !date || !decisionType) {
@@ -565,8 +755,10 @@ router.post('/quick-decision', (req, res) => {
     } else if (decisionType === 'holiday') {
       status = notes ? `إجازة رسمية (${notes})` : 'إجازة رسمية';
       is_holiday = 1;
-    } else if (decisionType === 'weekend') {
-      status = `إجازة أسبوعية (${dayName})`;
+    } else if (decisionType === 'weekend' || decisionType === 'weekly_off') {
+      status = 'عطلة أسبوعية';
+      is_absent = 0;
+      absence_days = 0;
     } else if (decisionType === 'annual') {
       status = 'إجازة سنوية';
       is_annual_leave = 1;
@@ -612,6 +804,11 @@ router.post('/quick-decision', (req, res) => {
       notes: notes || ''
     });
 
+    const saved = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?').get(emp.code, date);
+    if (saved) {
+      pushToSupabase('attendance', saved).catch(e => console.warn('[pushToSupabase warning]:', e.message));
+    }
+
     res.json({
       success: true,
       message: `تم اعتماد اليوم (${date} - ${dayName}) كـ [${status}] للموظف ${emp.name} بنجاح`
@@ -622,7 +819,7 @@ router.post('/quick-decision', (req, res) => {
 });
 
 // 5. Bulk assign overtime days to multiple attendance records or employees
-router.post('/bulk-overtime', (req, res) => {
+router.post('/bulk-overtime', async (req, res) => {
   try {
     const { recordIds, overtime_days = 1.0, notes } = req.body;
     if (!recordIds || !Array.isArray(recordIds) || recordIds.length === 0) {
@@ -648,6 +845,15 @@ router.post('/bulk-overtime', (req, res) => {
 
     updateTransaction();
 
+    setImmediate(() => {
+      for (const id of recordIds) {
+        try {
+          const saved = db.prepare('SELECT * FROM attendance WHERE id = ?').get(id);
+          if (saved) pushToSupabase('attendance', saved).catch(() => {});
+        } catch (e) {}
+      }
+    });
+
     res.json({
       success: true,
       message: `تم تسجيل إضافي (${otDays} يوم) لعدد ${recordIds.length} موظف بنجاح`
@@ -658,7 +864,7 @@ router.post('/bulk-overtime', (req, res) => {
 });
 
 // 6. Bulk assign absence days (0.5 or 1 or custom) to multiple records
-router.post('/bulk-absence', (req, res) => {
+router.post('/bulk-absence', async (req, res) => {
   try {
     const { recordIds, absence_days = 1.0, notes } = req.body;
     if (!recordIds || !Array.isArray(recordIds) || recordIds.length === 0) {
@@ -686,6 +892,15 @@ router.post('/bulk-absence', (req, res) => {
     });
 
     updateTransaction();
+
+    setImmediate(() => {
+      for (const id of recordIds) {
+        try {
+          const saved = db.prepare('SELECT * FROM attendance WHERE id = ?').get(id);
+          if (saved) pushToSupabase('attendance', saved).catch(() => {});
+        } catch (e) {}
+      }
+    });
 
     res.json({
       success: true,
@@ -761,6 +976,81 @@ router.post('/bulk-annual-leave', (req, res) => {
     res.json({
       success: true,
       message: `تم بنجاح تسجيل إجازة سنوية لعدد ${targetRecords.length} موظف وخصمها من الرصيد السنوي.`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 6.2 Bulk assign weekly off to multiple records or employees
+router.post('/bulk-weekly-off', (req, res) => {
+  try {
+    const { recordIds, employeeCodes, date, notes } = req.body;
+    if ((!recordIds || recordIds.length === 0) && (!employeeCodes || employeeCodes.length === 0)) {
+      return res.status(400).json({ error: 'لم يتم تحديد أي سجلات أو موظفين' });
+    }
+
+    const arabicDays = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    let count = 0;
+
+    if (recordIds && Array.isArray(recordIds) && recordIds.length > 0) {
+      const stmt = db.prepare(`
+        UPDATE attendance SET
+          status = 'عطلة أسبوعية',
+          is_absent = 0,
+          absence_days = 0,
+          notes = CASE WHEN ? != '' THEN ? ELSE notes END
+        WHERE id = ?
+      `);
+      const updateTx = db.transaction(() => {
+        for (const id of recordIds) {
+          stmt.run(notes || 'عطلة أسبوعية', notes || 'عطلة أسبوعية', id);
+          count++;
+        }
+      });
+      updateTx();
+    }
+
+    if (employeeCodes && Array.isArray(employeeCodes) && employeeCodes.length > 0 && date) {
+      const d = new Date(date);
+      const dayName = arabicDays[d.getDay()] || '';
+      const upsert = db.prepare(`
+        INSERT INTO attendance (
+          employee_id, employee_code, employee_name, department, date, day_name,
+          status, check_in, check_out, is_absent, absence_days, is_holiday, notes
+        ) VALUES (
+          @employee_id, @employee_code, @employee_name, @department, @date, @day_name,
+          'عطلة أسبوعية', '', '', 0, 0, 0, @notes
+        )
+        ON CONFLICT(employee_code, date) DO UPDATE SET
+          status = 'عطلة أسبوعية',
+          is_absent = 0,
+          absence_days = 0,
+          notes = excluded.notes
+      `);
+      const upsertTx = db.transaction(() => {
+        for (const code of employeeCodes) {
+          const emp = db.prepare('SELECT id, name, department FROM employees WHERE code = ?').get(code);
+          if (emp) {
+            upsert.run({
+              employee_id: emp.id,
+              employee_code: code,
+              employee_name: emp.name,
+              department: emp.department || 'عام',
+              date,
+              day_name: dayName,
+              notes: notes || 'عطلة أسبوعية مدفوعة الأجر'
+            });
+            count++;
+          }
+        }
+      });
+      upsertTx();
+    }
+
+    res.json({
+      success: true,
+      message: `تم بنجاح تسجيل عطلة أسبوعية مدفوعة الأجر لعدد ${count} حركة حضور.`
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

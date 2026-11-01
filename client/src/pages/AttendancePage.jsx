@@ -3,9 +3,11 @@ import {
   CalendarCheck, Clock, Download, Upload, Search, Filter, 
   FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw, X, 
   PlusCircle, Check, Edit2, Trash2, AlertTriangle, ShieldCheck,
-  Cpu, Users, CheckSquare, Square, ChevronDown, Sparkles
+  Cpu, Users, CheckSquare, Square, ChevronDown, Sparkles,
+  Printer, Loader2, Calendar, ArrowUpDown
 } from 'lucide-react';
-import { fetchJson, uploadFile } from '../utils/api';
+import { fetchJson, uploadFile, API_BASE } from '../utils/api';
+import AttendanceCardModal from '../components/AttendanceCardModal';
 
 export default function AttendancePage({ setActiveTab: setParentTab }) {
   const currentDate = new Date();
@@ -81,6 +83,24 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
   const [isUploading, setIsUploading] = useState(false);
   const [importMessage, setImportMessage] = useState(null);
 
+  // Export Colored Attendance Cards Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportScope, setExportScope] = useState('multiple'); // 'multiple', 'single', 'selected', 'all'
+  const [exportSelectedEmpCode, setExportSelectedEmpCode] = useState('');
+  const [exportMultiEmpCodes, setExportMultiEmpCodes] = useState(new Set());
+  const [exportSearchTerm, setExportSearchTerm] = useState('');
+  const [selectedSummaryCodes, setSelectedSummaryCodes] = useState(new Set());
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Printable Attendance Card Modal (A4 / A5 Single Page Fit)
+  const [showAttendanceCardModal, setShowAttendanceCardModal] = useState(false);
+  const [cardEmployeeCode, setCardEmployeeCode] = useState('');
+  const [isSavingEntry, setIsSavingEntry] = useState(false);
+
+  // Sorting state (default: chronological ASC تصاعدي حسب التاريخ)
+  const [dateSortOrder, setDateSortOrder] = useState('asc'); // 'asc' or 'desc'
+  const [daySortOrder, setDaySortOrder] = useState(null); // null, 'asc', 'desc'
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -105,6 +125,7 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
       setSummary(sum);
       setHolidays(hols || []);
       setSelectedIds(new Set());
+      setSelectedSummaryCodes(new Set());
     } catch (err) {
       console.error(err);
     } finally {
@@ -226,8 +247,9 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
 
   const handleSaveEntry = async (e) => {
     e.preventDefault();
+    setIsSavingEntry(true);
     try {
-      if (editingRecord) {
+      if (editingRecord && editingRecord.id && editingRecord.id !== 0) {
         await fetchJson(`/attendance/${editingRecord.id}`, {
           method: 'PUT',
           body: JSON.stringify(entryData)
@@ -235,14 +257,20 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
       } else {
         await fetchJson('/attendance/record', {
           method: 'POST',
-          body: JSON.stringify(entryData)
+          body: JSON.stringify({
+            ...entryData,
+            employee_code: editingRecord?.employee_code || entryData.employee_code,
+            date: editingRecord?.date || entryData.date
+          })
         });
       }
       setShowEntryModal(false);
       setEditingRecord(null);
-      loadData();
+      await loadData();
     } catch (err) {
-      alert(err.message);
+      alert('خطأ أثناء حفظ التعديل: ' + err.message);
+    } finally {
+      setIsSavingEntry(false);
     }
   };
 
@@ -341,6 +369,23 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     }
   };
 
+  // Bulk Weekly Off registration
+  const handleBulkWeeklyOff = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`هل أنت متأكد من تسجيل عطلة أسبوعية مدفوعة الأجر لعدد ${selectedIds.size} حركة حضور محددة؟`)) return;
+    try {
+      const res = await fetchJson('/attendance/bulk-weekly-off', {
+        method: 'POST',
+        body: JSON.stringify({ recordIds: Array.from(selectedIds) })
+      });
+      alert(res.message);
+      setSelectedIds(new Set());
+      loadData();
+    } catch (err) {
+      alert('خطأ أثناء تسجيل العطلة الأسبوعية: ' + err.message);
+    }
+  };
+
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -378,6 +423,84 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     }
   };
 
+  // Export Colored Attendance Cards to Excel
+  const handleExportCards = async (customCodes = null) => {
+    try {
+      setIsExporting(true);
+      let targetCodes = 'all';
+
+      if (customCodes) {
+        targetCodes = Array.isArray(customCodes) ? customCodes : [customCodes];
+      } else if (exportScope === 'multiple') {
+        const codesArr = Array.from(exportMultiEmpCodes);
+        if (codesArr.length === 0) {
+          alert('يرجى اختيار موظف واحد على الأقل من القائمة لتصدير كروت الحضور');
+          setIsExporting(false);
+          return;
+        }
+        targetCodes = codesArr;
+      } else if (exportScope === 'single') {
+        if (!exportSelectedEmpCode) {
+          alert('يرجى اختيار الموظف أولاً');
+          setIsExporting(false);
+          return;
+        }
+        targetCodes = [exportSelectedEmpCode];
+      } else if (exportScope === 'selected') {
+        if (selectedIds.size === 0) {
+          alert('لم يتم تحديد أي حركات في الجدول');
+          setIsExporting(false);
+          return;
+        }
+        const selectedRecs = records.filter(r => selectedIds.has(r.id));
+        const uniqueCodes = Array.from(new Set(selectedRecs.map(r => String(r.employee_code).trim())));
+        if (uniqueCodes.length === 0) {
+          alert('تعذر استخراج أكواد الموظفين المحددين');
+          setIsExporting(false);
+          return;
+        }
+        targetCodes = uniqueCodes;
+      } else if (exportScope === 'all') {
+        targetCodes = 'all';
+      }
+
+      const res = await fetch(`${API_BASE}/attendance/export/cards/excel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          year,
+          month,
+          startDate,
+          endDate,
+          employeeCodes: targetCodes,
+          department: deptFilter !== 'all' ? deptFilter : 'all'
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'فشل في تصدير كروت الحضور');
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const fileSuffix = year && month ? `${year}_${month}` : (startDate ? `${startDate}_${endDate}` : 'cards');
+      a.download = `كروت_الحضور_والانصراف_${fileSuffix}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      setShowExportModal(false);
+    } catch (err) {
+      alert('خطأ أثناء تصدير كارت الحضور الإكسيل: ' + err.message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Filtering records locally
   const filteredRecords = records.filter(r => {
     // 0. Date Range filter (strict filter based on selected from / to date)
@@ -398,10 +521,17 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     const hasIn = !!r.check_in && r.check_in.trim() !== '';
     const hasOut = !!r.check_out && r.check_out.trim() !== '';
 
+    // Check if official holiday or weekend
+    const isWeekendDay = r.is_weekend === 1 || r.day_name === 'الجمعة' || (r.status && r.status.includes('أسبوعية'));
+    const isOfficialHolidayDay = r.is_holiday === 1 || !!r.holiday_name || (r.status && r.status.includes('رسمية'));
+
     if (punchFilter === 'missing_either') {
       if (hasIn && hasOut) return false;
+      if (isWeekendDay || isOfficialHolidayDay) return false;
     } else if (punchFilter === 'missing_both') {
       if (hasIn || hasOut) return false;
+      // لا يظهر بها أيام الإجازات الرسمية أو العطلات الأسبوعية طبقاً للطلب
+      if (isWeekendDay || isOfficialHolidayDay) return false;
     } else if (punchFilter === 'has_punch') {
       if (!hasIn && !hasOut) return false;
     }
@@ -424,6 +554,23 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
     (s.department && s.department.includes(searchTerm))
   );
 
+  // Sort filtered records (Default: chronological ASC تصاعدي حسب التاريخ من 1 إلى 31)
+  const sortedRecords = [...filteredRecords].sort((a, b) => {
+    if (daySortOrder) {
+      const dayCompare = (a.day_name || '').localeCompare(b.day_name || '', 'ar');
+      if (dayCompare !== 0) return daySortOrder === 'asc' ? dayCompare : -dayCompare;
+    }
+    if (dateSortOrder === 'asc') {
+      const dComp = (a.date || '').localeCompare(b.date || '');
+      if (dComp !== 0) return dComp;
+      return Number(a.employee_code || 0) - Number(b.employee_code || 0);
+    } else {
+      const dComp = (b.date || '').localeCompare(a.date || '');
+      if (dComp !== 0) return dComp;
+      return Number(a.employee_code || 0) - Number(b.employee_code || 0);
+    }
+  });
+
   // Selection handlers
   const toggleSelectRecord = (id) => {
     const next = new Set(selectedIds);
@@ -433,12 +580,29 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
   };
 
   const handleSelectAllFiltered = () => {
-    const allFilteredIds = filteredRecords.map(r => r.id);
+    const allFilteredIds = sortedRecords.map(r => r.id);
     setSelectedIds(new Set(allFilteredIds));
   };
 
   const handleClearSelection = () => {
     setSelectedIds(new Set());
+  };
+
+  // Summary Tab Selection Handlers
+  const toggleSelectSummary = (code) => {
+    const next = new Set(selectedSummaryCodes);
+    const c = String(code).trim();
+    if (next.has(c)) next.delete(c);
+    else next.add(c);
+    setSelectedSummaryCodes(next);
+  };
+
+  const handleSelectAllSummary = () => {
+    if (selectedSummaryCodes.size === filteredSummary.length) {
+      setSelectedSummaryCodes(new Set());
+    } else {
+      setSelectedSummaryCodes(new Set(filteredSummary.map(s => String(s.employee_code).trim())));
+    }
   };
 
   return (
@@ -500,6 +664,48 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
             <Download className="w-4 h-4 text-slate-500" />
             قالب إكسيل
           </a>
+
+          {/* Printable Attendance Card Modal (A4 / A5) */}
+          <button
+            onClick={() => {
+              const firstCode = selectedSummaryCodes.size > 0 
+                ? Array.from(selectedSummaryCodes)[0] 
+                : (summary[0]?.employee_code || (records[0]?.employee_code || ''));
+              setCardEmployeeCode(firstCode);
+              setShowAttendanceCardModal(true);
+            }}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs md:text-sm font-bold text-white bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 rounded-xl transition-all shadow-xs cursor-pointer"
+            title="عرض كارت الحضور الشهري وطباعته أو حفظه PDF بمقاسات A4 أو A5 (صفحة واحدة)"
+          >
+            <Printer className="w-4 h-4 text-blue-100" />
+            <span>طباعة كارت الحضور (A4 / A5)</span>
+          </button>
+
+          {/* Export Styled Colored Attendance Cards */}
+          <button
+            onClick={() => {
+              if (selectedSummaryCodes.size > 0) {
+                setExportScope('multiple');
+                setExportMultiEmpCodes(new Set(selectedSummaryCodes));
+              } else if (selectedIds.size > 0) {
+                const selectedRecs = records.filter(r => selectedIds.has(r.id));
+                const uniqueCodes = new Set(selectedRecs.map(r => String(r.employee_code).trim()));
+                setExportScope('multiple');
+                setExportMultiEmpCodes(uniqueCodes);
+              } else {
+                setExportScope('multiple');
+                if (summary.length > 0 && exportMultiEmpCodes.size === 0) {
+                  setExportMultiEmpCodes(new Set(summary.map(s => String(s.employee_code).trim())));
+                }
+              }
+              setShowExportModal(true);
+            }}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs md:text-sm font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-all border border-emerald-300 shadow-xs cursor-pointer"
+            title="تصدير كارت حضور تفصيلي لموظف أو تحديد عدة موظفين (شيت لكل موظف) إكسيل ملون"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+            تصدير كارت إكسيل ملون
+          </button>
 
           {/* Import Attendance */}
           <button
@@ -811,6 +1017,29 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
               تسجيل إجازة سنوية للمحددين
             </button>
 
+            {/* Bulk Weekly Off Button */}
+            <button
+              onClick={handleBulkWeeklyOff}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 rounded-xl shadow-xs transition-all cursor-pointer"
+              title="تسجيل عطلة أسبوعية مدفوعة الأجر للحركات المحددة"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              تسجيل عطلة أسبوعية للمحددين
+            </button>
+
+            {/* Bulk Export to Colored Excel */}
+            <button
+              onClick={() => {
+                setExportScope('selected');
+                setShowExportModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-teal-600 hover:bg-teal-500 rounded-xl shadow-xs transition-all cursor-pointer"
+              title="تصدير كروت الحضور للموظفين المحددين في ملف إكسيل ملون"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              تصدير كروت المحددين إكسيل
+            </button>
+
             {/* Cancel selection */}
             <button
               onClick={handleClearSelection}
@@ -847,7 +1076,7 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                     <th className="py-3 px-3 text-center w-10">
                       <input
                         type="checkbox"
-                        checked={selectedIds.size === filteredRecords.length && filteredRecords.length > 0}
+                        checked={selectedIds.size === sortedRecords.length && sortedRecords.length > 0}
                         onChange={(e) => {
                           if (e.target.checked) handleSelectAllFiltered();
                           else handleClearSelection();
@@ -859,19 +1088,49 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                     <th className="py-3 px-3">القسم</th>
                     <th className="py-3 px-3 text-center">الكود</th>
                     <th className="py-3 px-4 font-bold text-slate-900">الاسم</th>
-                    <th className="py-3 px-3 text-center">التاريخ</th>
-                    <th className="py-3 px-3 text-center font-bold text-slate-800">اليوم</th>
+                    <th 
+                      onClick={() => {
+                        setDaySortOrder(null);
+                        setDateSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                      }}
+                      className="py-3 px-3 text-center cursor-pointer hover:bg-slate-200 transition-colors select-none group"
+                      title="انقر لفرز التاريخ تصاعدي (1 ← 31) أو تنازلي (31 ← 1)"
+                    >
+                      <div className="flex items-center justify-center gap-1 font-bold text-slate-800">
+                        <span>التاريخ</span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono">
+                          {dateSortOrder === 'asc' ? '↑ تصاعدي' : '↓ تنازلي'}
+                        </span>
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => {
+                        setDaySortOrder(prev => prev === 'asc' ? 'desc' : (prev === 'desc' ? null : 'asc'));
+                      }}
+                      className="py-3 px-3 text-center font-bold text-slate-800 cursor-pointer hover:bg-slate-200 transition-colors select-none group"
+                      title="انقر للفرز حسب اسم اليوم"
+                    >
+                      <div className="flex items-center justify-center gap-1 font-bold text-slate-800">
+                        <span>اليوم</span>
+                        <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-blue-600" />
+                        {daySortOrder && (
+                          <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                            {daySortOrder === 'asc' ? 'أ-ي' : 'ي-أ'}
+                          </span>
+                        )}
+                      </div>
+                    </th>
                     <th className="py-3 px-3 text-center font-bold text-slate-800">حضور</th>
                     <th className="py-3 px-3 text-center font-bold text-slate-800">انصراف</th>
                     <th className="py-3 px-3 text-center font-bold text-rose-700 bg-rose-50/40">غياب (أيام)</th>
                     <th className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/40">إضافي (أيام)</th>
                     <th className="py-3 px-3 text-center">حالة اليوم والبت</th>
                     <th className="py-3 px-3 text-center">رصيد الإجازة</th>
-                    <th className="py-3 px-3 text-center w-20">إجراءات</th>
+                    <th className="py-3 px-3 text-center w-24">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredRecords.map((rec) => {
+                  {sortedRecords.map((rec) => {
                     const isSelected = selectedIds.has(rec.id);
                     const hasCheckIn = !!rec.check_in && rec.check_in !== '-';
                     const hasCheckOut = !!rec.check_out && rec.check_out !== '-';
@@ -1018,6 +1277,14 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                               <div className="flex items-center gap-1 mt-0.5">
                                 <button
                                   type="button"
+                                  onClick={() => handleQuickDecision(rec.employee_code, rec.date, 'weekend')}
+                                  className="px-1.5 py-0.5 text-[9px] font-bold bg-sky-600 hover:bg-sky-700 text-white rounded cursor-pointer transition-colors"
+                                  title="تأكيد واعتماد كـ عطلة أسبوعية مدفوعة الأجر"
+                                >
+                                  عطلة أسبوعية
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => handleQuickDecision(rec.employee_code, rec.date, 'absence')}
                                   className="px-1.5 py-0.5 text-[9px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded cursor-pointer"
                                   title="تحويل إلى غياب"
@@ -1079,8 +1346,25 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex items-center justify-center gap-1">
                             <button
+                              onClick={() => {
+                                setCardEmployeeCode(rec.employee_code);
+                                setShowAttendanceCardModal(true);
+                              }}
+                              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                              title="عرض وطباعة كارت الحضور الشهري لهذا الموظف (A4 / A5)"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleQuickDecision(rec.employee_code, rec.date, 'weekly_off')}
+                              className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-lg transition-colors cursor-pointer"
+                              title="تسجيل هذا اليوم كـ عطلة أسبوعية مدفوعة الأجر"
+                            >
+                              <Calendar className="w-3.5 h-3.5 text-sky-600" />
+                            </button>
+                            <button
                               onClick={() => handleOpenEdit(rec)}
-                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                               title="تعديل حركة الحضور"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
@@ -1104,54 +1388,147 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
         ) : activeTab === 'summary' ? (
           /* Monthly Summary with Days metrics (Remaining Leaves & Loans added, Delay removed) */
           <div className="overflow-x-auto">
+            {/* Top Bar for Summary Tab */}
+            <div className="p-3 bg-emerald-50/60 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
+              <span className="flex items-center gap-1.5 font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                يتم احتساب أيام العطلات الأسبوعية (الجمعة) والإجازات الرسمية ضمن إجمالي أيام الحضور المحتسبة للشهر لأنها إجازات مدفوعة الأجر.
+              </span>
+              <div className="flex items-center gap-2">
+                {selectedSummaryCodes.size > 0 && (
+                  <button
+                    onClick={() => handleExportCards(Array.from(selectedSummaryCodes))}
+                    disabled={isExporting}
+                    className="px-3.5 py-1.5 font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    title="تصدير كروت الموظفين المحددين في ملف إكسيل يحتوي على شيت لكل موظف"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
+                    <span>تصدير كروت المحددين ({selectedSummaryCodes.size} موظف - شيت لكل موظف)</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setExportScope('all');
+                    setShowExportModal(true);
+                  }}
+                  className="px-3 py-1.5 font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                  تصدير ملخص وكروت الجميع إكسيل ملون
+                </button>
+              </div>
+            </div>
+
             <table className="w-full text-right text-xs text-slate-600">
               <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
                 <tr>
+                  <th className="py-3 px-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      checked={filteredSummary.length > 0 && selectedSummaryCodes.size === filteredSummary.length}
+                      onChange={handleSelectAllSummary}
+                      className="rounded border-slate-300 text-emerald-600 cursor-pointer"
+                      title="تحديد / إلغاء تحديد الكل"
+                    />
+                  </th>
                   <th className="py-3 px-3 text-center">الكود</th>
                   <th className="py-3 px-4 font-bold text-slate-900">اسم الموظف</th>
                   <th className="py-3 px-3">القسم</th>
-                  <th className="py-3 px-3 text-center font-bold text-emerald-700 bg-emerald-50/50">أيام الحضور</th>
+                  <th className="py-3 px-3 text-center font-bold text-emerald-800 bg-emerald-50" title="إجمالي أيام الحضور شاملة العطلات الأسبوعية والإجازات الرسمية مدفوعة الأجر">
+                    إجمالي الحضور المحتسب (مدفوع)
+                  </th>
+                  <th className="py-3 px-3 text-center font-bold text-blue-800 bg-blue-50/50" title="أيام الحضور الفعلي المسجل بها بصمة">
+                    حضور بالبصمة
+                  </th>
+                  <th className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-50/50" title="أيام العطلات الأسبوعية (الجمعة) والإجازات الرسمية">
+                    عطلات ورسمية
+                  </th>
                   <th className="py-3 px-3 text-center font-bold text-rose-700 bg-rose-50/50">أيام الغياب</th>
-                  <th className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/50">أيام الإضافي (يوم)</th>
+                  <th className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/30">أيام الإضافي (يوم)</th>
                   <th className="py-3 px-3 text-center font-bold text-amber-700 bg-amber-50/50">إجازات سنوية</th>
                   <th className="py-3 px-3 text-center font-bold text-emerald-800 bg-emerald-100/50">باقي الإجازات السنوي</th>
                   <th className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-100/50">باقي السلف</th>
+                  <th className="py-3 px-3 text-center font-bold text-slate-700">كارت الموظف</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-mono">
-                {filteredSummary.map((sum) => (
-                  <tr key={sum.employee_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/20">
-                      {sum.employee_code}
-                    </td>
-                    <td className="py-3 px-4 font-bold text-slate-800 font-sans">{sum.employee_name}</td>
-                    <td className="py-3 px-3 text-slate-600 font-sans">{sum.department}</td>
-                    <td className="py-3 px-3 text-center font-bold text-emerald-700">
-                      {sum.present_days} يوم
-                    </td>
-                    <td className="py-3 px-3 text-center font-bold text-rose-700">
-                      {sum.absent_days} يوم
-                    </td>
-                    <td className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/30">
-                      {sum.total_overtime_days} يوم
-                    </td>
-                    <td className="py-3 px-3 text-center font-bold text-amber-700">
-                      {sum.annual_leave_days} يوم
-                    </td>
-                    {/* Remaining Annual Leave Balance */}
-                    <td className="py-3 px-3 text-center font-bold text-emerald-800 bg-emerald-50/50">
-                      <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900">
-                        {sum.remaining_annual_leave_balance || 0} يوم
-                      </span>
-                    </td>
-                    {/* Remaining Loan Balance */}
-                    <td className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-50/50">
-                      <span className="px-2 py-0.5 rounded-lg bg-purple-100 text-purple-900">
-                        {(sum.remaining_loan_balance || 0).toLocaleString()} ج.م
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {filteredSummary.map((sum) => {
+                  const isChecked = selectedSummaryCodes.has(String(sum.employee_code).trim());
+                  return (
+                    <tr key={sum.employee_id} className={`transition-colors ${isChecked ? 'bg-emerald-50/70 font-semibold' : 'hover:bg-slate-50'}`}>
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleSelectSummary(String(sum.employee_code).trim())}
+                          className="rounded border-slate-300 text-emerald-600 cursor-pointer"
+                        />
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/20">
+                        {sum.employee_code}
+                      </td>
+                      <td className="py-3 px-4 font-bold text-slate-800 font-sans">{sum.employee_name}</td>
+                      <td className="py-3 px-3 text-slate-600 font-sans">{sum.department}</td>
+                      <td className="py-3 px-3 text-center font-bold text-emerald-700 bg-emerald-50/30">
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900 font-black">
+                          {sum.present_days} يوم
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-blue-700">
+                        {sum.actual_present_days ?? sum.present_days} يوم
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-purple-700">
+                        {((sum.weekend_days || 0) + (sum.official_holiday_days || 0))} يوم
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-rose-700">
+                        {sum.absent_days} يوم
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-blue-700 bg-blue-50/30">
+                        {sum.total_overtime_days} يوم
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-amber-700">
+                        {sum.annual_leave_days} يوم
+                      </td>
+                      {/* Remaining Annual Leave Balance */}
+                      <td className="py-3 px-3 text-center font-bold text-emerald-800 bg-emerald-50/50">
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900">
+                          {sum.remaining_annual_leave_balance || 0} يوم
+                        </span>
+                      </td>
+                      {/* Remaining Loan Balance */}
+                      <td className="py-3 px-3 text-center font-bold text-purple-800 bg-purple-50/50">
+                        <span className="px-2 py-0.5 rounded-lg bg-purple-100 text-purple-900">
+                          {(sum.remaining_loan_balance || 0).toLocaleString()} ج.م
+                        </span>
+                      </td>
+                      {/* Direct Print / Export Employee Card */}
+                      <td className="py-3 px-3 text-center font-sans">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              setCardEmployeeCode(sum.employee_code);
+                              setShowAttendanceCardModal(true);
+                            }}
+                            className="px-2 py-1 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-300 rounded-lg inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                            title="عرض كارت الحضور والطباعة على ورق A4 أو A5 وحفظ PDF"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-blue-600" />
+                            <span>طباعة A4/A5</span>
+                          </button>
+                          <button
+                            onClick={() => handleExportCards([sum.employee_code])}
+                            disabled={isExporting}
+                            className="px-2 py-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                            title="تحميل كارت الحضور التفصيلي الملون لهذا الموظف إكسيل"
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>إكسيل</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1576,22 +1953,25 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                     onChange={(e) => {
                       const st = e.target.value;
                       const isAbs = st.includes('غياب');
+                      const isHol = st.includes('رسمية');
                       setEntryData({
                         ...entryData,
                         status: st,
                         is_absent: isAbs,
                         absence_days: isAbs ? (st.includes('نصف') ? 0.5 : 1.0) : 0,
-                        is_annual_leave: st.includes('سنوي')
+                        is_annual_leave: st.includes('سنوي'),
+                        is_holiday: isHol ? 1 : 0
                       });
                     }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold"
                   >
                     <option value="حاضر">حاضر</option>
+                    <option value="عطلة أسبوعية">عطلة أسبوعية (مدفوعة الأجر)</option>
+                    <option value="إجازة رسمية">إجازة رسمية (مدفوعة الأجر)</option>
                     <option value="غياب">غياب (يوم كامل)</option>
                     <option value="غياب نصف يوم">غياب نصف يوم (0.5)</option>
                     <option value="إجازة سنوية">إجازة سنوية</option>
                     <option value="مأمورية">مأمورية</option>
-                    <option value="راحة أسبوعية">راحة أسبوعية</option>
                   </select>
                 </div>
 
@@ -1666,9 +2046,17 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs"
+                  disabled={isSavingEntry}
+                  className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  {editingRecord ? 'حفظ تعديلات الحركة' : 'حفظ الحركة'}
+                  {isSavingEntry ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>جاري حفظ التعديل...</span>
+                    </>
+                  ) : (
+                    editingRecord ? 'حفظ تعديلات الحركة' : 'حفظ الحركة'
+                  )}
                 </button>
               </div>
             </form>
@@ -1834,6 +2222,284 @@ export default function AttendancePage({ setActiveTab: setParentTab }) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Export Colored Attendance Cards Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 p-5 md:p-6 space-y-4 my-auto max-h-[95vh] flex flex-col">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center shadow-xs">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">تصدير كروت الحضور (إكسيل ملون - شيت لكل موظف)</h3>
+                  <p className="text-xs text-slate-500">اختر موظفاً أو حدد عدة موظفين لتصدير كارت حضور تفصيلي منسق</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Scope Selection */}
+            <div className="space-y-3 overflow-y-auto pr-1">
+              <label className="block text-xs font-bold text-slate-700">اختر طريقة تحديد الموظفين:</label>
+              
+              <div className="space-y-2.5 text-xs">
+                {/* 1. Multiple Custom Selected Employees */}
+                <div className={`p-3.5 rounded-2xl border transition-all ${
+                  exportScope === 'multiple' ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50/70 border-slate-200'
+                }`}>
+                  <label className="flex items-center justify-between cursor-pointer mb-2">
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="radio"
+                        name="exportScope"
+                        value="multiple"
+                        checked={exportScope === 'multiple'}
+                        onChange={() => setExportScope('multiple')}
+                        className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-800 text-xs md:text-sm">
+                        تحديد موظفين متعددين (شيت منفصل لكل موظف)
+                      </span>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full font-bold text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      تم اختيار {exportMultiEmpCodes.size} من {summary.length}
+                    </span>
+                  </label>
+
+                  {exportScope === 'multiple' && (
+                    <div className="mt-3 space-y-2.5 bg-white p-3 rounded-xl border border-emerald-200/80 animate-in fade-in">
+                      {/* Search & Actions Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="relative flex-1 min-w-[180px]">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5" />
+                          <input
+                            type="text"
+                            placeholder="بحث بالاسم أو الكود أو القسم..."
+                            value={exportSearchTerm}
+                            onChange={(e) => setExportSearchTerm(e.target.value)}
+                            className="w-full pr-8 pl-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const filtered = summary.filter(emp =>
+                                !exportSearchTerm ||
+                                emp.employee_name.includes(exportSearchTerm) ||
+                                String(emp.employee_code).includes(exportSearchTerm) ||
+                                (emp.department && emp.department.includes(exportSearchTerm))
+                              );
+                              setExportMultiEmpCodes(new Set(filtered.map(s => String(s.employee_code).trim())));
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                          >
+                            تحديد الكل
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setExportMultiEmpCodes(new Set())}
+                            className="px-2.5 py-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 transition-colors cursor-pointer"
+                          >
+                            إلغاء التحديد
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Scrollable Employee Checklist */}
+                      <div className="max-h-52 overflow-y-auto space-y-1 divide-y divide-slate-100 border border-slate-100 rounded-xl p-1 bg-slate-50/40">
+                        {summary
+                          .filter(emp =>
+                            !exportSearchTerm ||
+                            emp.employee_name.includes(exportSearchTerm) ||
+                            String(emp.employee_code).includes(exportSearchTerm) ||
+                            (emp.department && emp.department.includes(exportSearchTerm))
+                          )
+                          .map(emp => {
+                            const empCode = String(emp.employee_code).trim();
+                            const isChecked = exportMultiEmpCodes.has(empCode);
+                            return (
+                              <div
+                                key={emp.employee_id || empCode}
+                                onClick={() => {
+                                  const next = new Set(exportMultiEmpCodes);
+                                  if (next.has(empCode)) next.delete(empCode);
+                                  else next.add(empCode);
+                                  setExportMultiEmpCodes(next);
+                                }}
+                                className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${
+                                  isChecked ? 'bg-emerald-100/70 text-emerald-950 font-semibold' : 'hover:bg-white text-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {}}
+                                    className="rounded border-slate-300 text-emerald-600 pointer-events-none cursor-pointer"
+                                  />
+                                  <span className="font-mono font-bold text-blue-700 bg-white border border-blue-200 px-1.5 py-0.5 rounded text-[11px]">
+                                    {emp.employee_code}
+                                  </span>
+                                  <span className="text-xs">{emp.employee_name}</span>
+                                </div>
+                                <span className="text-[10px] text-slate-500 bg-white/80 px-2 py-0.5 rounded border border-slate-200">
+                                  {emp.department || 'عام'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+                      <p className="text-[11px] text-slate-500 text-center">
+                        💡 سيتم إنشاء ملف إكسيل يحتوي على شيت منفصل لكل موظف تم تحديده مع ملخص عام.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Single Employee */}
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border transition-all cursor-pointer ${
+                  exportScope === 'single' ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                }`}>
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    value="single"
+                    checked={exportScope === 'single'}
+                    onChange={() => setExportScope('single')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <div className="flex-1 space-y-2">
+                    <span className="font-bold text-slate-800 block">موظف واحد فقط (شيت واحد)</span>
+                    {exportScope === 'single' && (
+                      <select
+                        value={exportSelectedEmpCode}
+                        onChange={(e) => setExportSelectedEmpCode(e.target.value)}
+                        className="w-full py-1.5 px-3 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="">-- اختر الموظف من القائمة --</option>
+                        {summary.map(emp => (
+                          <option key={emp.employee_id} value={emp.employee_code}>
+                            [{emp.employee_code}] {emp.employee_name} ({emp.department || 'عام'})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </label>
+
+                {/* 3. All Employees */}
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border transition-all cursor-pointer ${
+                  exportScope === 'all' ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                }`}>
+                  <input
+                    type="radio"
+                    name="exportScope"
+                    value="all"
+                    checked={exportScope === 'all'}
+                    onChange={() => setExportScope('all')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 block">جميع موظفي الشركة {deptFilter !== 'all' ? `(قسم ${deptFilter})` : ''}</span>
+                    <span className="text-[11px] text-slate-500">
+                      ملف إكسيل شامل: شيت رئيسي لملخص الحضور العام + شيت منفصل ملون لكل موظف ({summary.length} موظف)
+                    </span>
+                  </div>
+                </label>
+
+                {/* 4. Selected from Daily Table */}
+                {selectedIds.size > 0 && (
+                  <label className={`flex items-start gap-3 p-3 rounded-2xl border transition-all cursor-pointer ${
+                    exportScope === 'selected' ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-400' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="exportScope"
+                      value="selected"
+                      checked={exportScope === 'selected'}
+                      onChange={() => setExportScope('selected')}
+                      className="mt-0.5 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-800 block">الموظفون المحددون في جدول الحركات</span>
+                      <span className="text-[11px] text-slate-500">
+                        سيتم تصدير كروت {new Set(records.filter(r => selectedIds.has(r.id)).map(r => r.employee_code)).size} موظف من واقع الحركات المحددة ({selectedIds.size} حركة)
+                      </span>
+                    </div>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            {/* Smart Calculation Notice Banner */}
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-3 flex items-start gap-2.5 text-xs shrink-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5 text-emerald-950">
+                <p className="font-bold text-[11px]">ميزة الاحتساب والتلوين التلقائي الذكي:</p>
+                <p className="text-[10px] text-emerald-800 leading-relaxed">
+                  يتم احتساب أيام <strong>العطلات الأسبوعية (الجمعة)</strong> و<strong>الإجازات الرسمية</strong> تلقائياً كأيام حضور مدفوعة الأجر كاملة وتظهر في الإكسيل مُميزة بالألوان (بنفسجي للإجازات الرسمية والأسبوعية، وأخضر للحضور الفعلي، وأحمر للغياب).
+                </p>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExportCards()}
+                disabled={isExporting || (exportScope === 'multiple' && exportMultiEmpCodes.size === 0)}
+                className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isExporting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جارِ تجهيز الإكسيل الملون...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    <span>
+                      {exportScope === 'multiple' 
+                        ? `تحميل كروت (${exportMultiEmpCodes.size}) موظف` 
+                        : 'تحميل ملف الإكسيل الملون'}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Printable Attendance Card Modal (A4 / A5 Single Page Fit) */}
+      {showAttendanceCardModal && (
+        <AttendanceCardModal
+          records={records}
+          summary={summary}
+          employees={summary}
+          initialEmployeeCode={cardEmployeeCode}
+          year={year}
+          month={month}
+          startDate={startDate}
+          endDate={endDate}
+          onClose={() => setShowAttendanceCardModal(false)}
+        />
       )}
 
     </div>

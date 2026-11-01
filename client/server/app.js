@@ -33,13 +33,28 @@ let lastAttendancePull = 0;
 export async function ensureAttendanceFresh() {
   if (!process.env.VERCEL) return;
   const now = Date.now();
-  if (now - lastAttendancePull > 20000) { // 20s TTL
+  if (now - lastAttendancePull > 30000) { // 30s TTL
     lastAttendancePull = now;
     try {
       const { pullFreshAttendance } = await import('./supabaseSync.js');
       await pullFreshAttendance(db);
     } catch (e) {
       console.warn('Auto pullFreshAttendance warning:', e.message);
+    }
+  }
+}
+
+let lastEmployeesPull = 0;
+export async function ensureEmployeesFresh() {
+  if (!process.env.VERCEL) return;
+  const now = Date.now();
+  if (now - lastEmployeesPull > 30000) { // 30s TTL
+    lastEmployeesPull = now;
+    try {
+      const { pullFromSupabase } = await import('./supabaseSync.js');
+      await pullFromSupabase(db, ['employees']);
+    } catch (e) {
+      console.warn('Auto ensureEmployeesFresh warning:', e.message);
     }
   }
 }
@@ -98,6 +113,16 @@ app.get(['/api/health', '/health'], (req, res) => {
   });
 });
 
+// Diagnostic debug endpoint
+app.get(['/api/debug-db', '/debug-db'], async (req, res) => {
+  try {
+    const row = db.prepare('SELECT COUNT(*) as c FROM employees').get();
+    res.json({ success: true, count: row.c, vercel: !!process.env.VERCEL });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 // Manual sync trigger (Push from SQLite to Supabase)
 app.post(['/api/sync/trigger', '/sync/trigger'], async (req, res) => {
   try {
@@ -143,5 +168,12 @@ if (fs.existsSync(clientDist)) {
     next();
   });
 }
+
+// Global express error handler
+app.use((err, req, res, next) => {
+  console.error('[Express Global Error]:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err?.message || 'Server error', stack: err?.stack });
+});
 
 export default app;

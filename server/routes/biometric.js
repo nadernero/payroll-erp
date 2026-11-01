@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { testDeviceConnection, fetchDeviceAttendances } from '../biometricService.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ router.get('/devices', (req, res) => {
 });
 
 // 2. Add new biometric device
-router.post('/devices', (req, res) => {
+router.post('/devices', async (req, res) => {
   try {
     const { name, ip, port, protocol, timeout, location } = req.body;
     if (!name || !ip) {
@@ -36,6 +37,9 @@ router.post('/devices', (req, res) => {
     );
 
     const device = db.prepare('SELECT * FROM biometric_devices WHERE id = ?').get(result.lastInsertRowid);
+    if (device) {
+      try { await pushToSupabase('biometric_devices', device); } catch (e) {}
+    }
     res.status(201).json(device);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -43,7 +47,7 @@ router.post('/devices', (req, res) => {
 });
 
 // 3. Update biometric device
-router.put('/devices/:id', (req, res) => {
+router.put('/devices/:id', async (req, res) => {
   try {
     const { name, ip, port, protocol, timeout, location, status } = req.body;
     const existing = db.prepare('SELECT * FROM biometric_devices WHERE id = ?').get(req.params.id);
@@ -71,6 +75,9 @@ router.put('/devices/:id', (req, res) => {
     );
 
     const updated = db.prepare('SELECT * FROM biometric_devices WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('biometric_devices', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -78,9 +85,10 @@ router.put('/devices/:id', (req, res) => {
 });
 
 // 4. Delete biometric device
-router.delete('/devices/:id', (req, res) => {
+router.delete('/devices/:id', async (req, res) => {
   try {
     db.prepare('DELETE FROM biometric_devices WHERE id = ?').run(req.params.id);
+    try { await deleteFromSupabase('biometric_devices', req.params.id); } catch (e) {}
     res.json({ success: true, message: 'تم حذف الماكينة بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });

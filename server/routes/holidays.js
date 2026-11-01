@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { pushToSupabase, deleteFromSupabase, ensureFreshData } from '../supabaseSync.js';
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ router.get('/', (req, res) => {
 });
 
 // 2. Add new official holiday
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { name, holiday_date, notes, autoApplyToAttendance } = req.body;
     if (!name || !holiday_date) {
@@ -40,6 +41,9 @@ router.post('/', (req, res) => {
 
     const result = stmt.run(name.trim(), holiday_date.trim(), year, notes || 'إجازة رسمية مدفوعة الأجر');
     const newHoliday = db.prepare('SELECT * FROM official_holidays WHERE id = ?').get(result.lastInsertRowid);
+    if (newHoliday) {
+      try { await pushToSupabase('official_holidays', newHoliday); } catch (e) {}
+    }
 
     // If auto-apply requested: mark/create attendance records for all active employees
     let appliedCount = 0;
@@ -59,6 +63,7 @@ router.post('/', (req, res) => {
         ON CONFLICT(employee_code, date) DO UPDATE SET
           status = excluded.status,
           is_absent = 0,
+          absence_days = 0,
           is_holiday = 1,
           notes = excluded.notes
       `);
@@ -79,6 +84,13 @@ router.post('/', (req, res) => {
         }
       });
       applyTxn();
+
+      for (const emp of activeEmployees) {
+        try {
+          const savedAtt = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?').get(emp.code, holiday_date);
+          if (savedAtt) await pushToSupabase('attendance', savedAtt);
+        } catch (e) {}
+      }
     }
 
     res.status(201).json({
@@ -95,7 +107,7 @@ router.post('/', (req, res) => {
 });
 
 // 3. Update official holiday
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { name, holiday_date, notes } = req.body;
     const existing = db.prepare('SELECT * FROM official_holidays WHERE id = ?').get(req.params.id);
@@ -114,6 +126,9 @@ router.put('/:id', (req, res) => {
     `).run(name ? name.trim() : null, holiday_date ? holiday_date.trim() : null, year, notes, req.params.id);
 
     const updated = db.prepare('SELECT * FROM official_holidays WHERE id = ?').get(req.params.id);
+    if (updated) {
+      try { await pushToSupabase('official_holidays', updated); } catch (e) {}
+    }
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -121,12 +136,13 @@ router.put('/:id', (req, res) => {
 });
 
 // 4. Delete official holiday
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const existing = db.prepare('SELECT * FROM official_holidays WHERE id = ?').get(req.params.id);
     if (!existing) return res.status(404).json({ error: 'الإجازة غير موجودة' });
 
     db.prepare('DELETE FROM official_holidays WHERE id = ?').run(req.params.id);
+    try { await deleteFromSupabase('official_holidays', req.params.id); } catch (e) {}
     res.json({ success: true, message: 'تم حذف الإجازة الرسمية بنجاح' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -168,6 +184,7 @@ router.post('/apply-all', (req, res) => {
       ON CONFLICT(employee_code, date) DO UPDATE SET
         status = excluded.status,
         is_absent = 0,
+        absence_days = 0,
         is_holiday = 1,
         notes = excluded.notes
     `);
