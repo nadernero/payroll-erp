@@ -312,19 +312,17 @@ router.post('/sync', async (req, res) => {
 
     syncTransaction();
 
-    // Immediately push newly synced biometric attendance records to Supabase in batch
+    // Immediately push newly synced biometric attendance records to Firestore in batch
     if (syncedKeys.length > 0) {
-      setImmediate(() => {
-        try {
-          const selectStmt = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?');
-          const actualRows = syncedKeys.map(k => selectStmt.get(k.code, k.date)).filter(Boolean);
-          if (actualRows.length > 0) {
-            pushBatchToSupabase('attendance', actualRows).catch(e => console.warn('[biometric sync pushBatch warning]:', e.message));
-          }
-        } catch (e) {
-          console.warn('[biometric sync pushBatch error]:', e.message);
+      try {
+        const selectStmt = db.prepare('SELECT * FROM attendance WHERE employee_code = ? AND date = ?');
+        const actualRows = syncedKeys.map(k => selectStmt.get(k.code, k.date)).filter(Boolean);
+        if (actualRows.length > 0) {
+          await pushBatchToSupabase('attendance', actualRows);
         }
-      });
+      } catch (e) {
+        console.warn('[biometric sync pushBatch error]:', e.message);
+      }
     }
 
     const skippedCodesList = Array.from(skippedCodes).slice(0, 10).join(', ');

@@ -3,7 +3,7 @@ import {
   Users, Calculator, CreditCard, Palmtree, DollarSign, 
   CalendarCheck, ArrowUpRight, TrendingUp, Inbox, ShieldCheck, 
   ChevronLeft, Sparkles, Building2, FileSpreadsheet, Copy, Check,
-  ExternalLink, MessageCircle, Smartphone, Share2
+  ExternalLink, MessageCircle, Smartphone, Share2, Wallet
 } from 'lucide-react';
 import { fetchJson } from '../utils/api';
 
@@ -95,6 +95,14 @@ export default function DashboardPage({ setActiveTab }) {
           </p>
 
           <div className="flex flex-wrap items-center gap-2.5 mt-5">
+            <button
+              onClick={() => setActiveTab('treasury')}
+              className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600/80 text-white text-xs md:text-sm font-bold rounded-xl shadow-xs hover:bg-emerald-600 transition-all cursor-pointer"
+            >
+              <Wallet className="w-4 h-4 text-emerald-200" />
+              <span>الخزينة والعهد</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('payroll')}
               className="flex items-center gap-2 px-4 py-2.5 bg-white text-blue-800 text-xs md:text-sm font-bold rounded-xl shadow-xs hover:bg-blue-50 transition-all cursor-pointer"

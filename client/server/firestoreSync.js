@@ -267,7 +267,21 @@ export async function pullFromFirestore(sqliteDb, collectionList = null) {
           const colList = cols.map(c => `"${c}"`).join(', ');
           const placeholders = cols.map(() => '?').join(', ');
           const updateCols = cols.filter(c => c !== 'employee_code' && c !== 'date');
-          const updateSet = updateCols.map(c => `"${c}" = excluded."${c}"`).join(', ');
+          const updateSet = updateCols.map(c => {
+            if (c === 'check_in') {
+              return `"check_in" = CASE WHEN excluded."check_in" IS NOT NULL AND excluded."check_in" != '' THEN excluded."check_in" ELSE attendance."check_in" END`;
+            }
+            if (c === 'check_out') {
+              return `"check_out" = CASE WHEN excluded."check_out" IS NOT NULL AND excluded."check_out" != '' THEN excluded."check_out" ELSE attendance."check_out" END`;
+            }
+            if (c === 'status') {
+              return `"status" = CASE WHEN attendance."check_in" IS NOT NULL AND attendance."check_in" != '' AND (excluded."status" = 'بدون بصمة (غير مسجل)' OR excluded."status" = 'غائب') THEN attendance."status" ELSE excluded."status" END`;
+            }
+            if (c === 'is_absent') {
+              return `"is_absent" = CASE WHEN attendance."check_in" IS NOT NULL AND attendance."check_in" != '' THEN 0 ELSE excluded."is_absent" END`;
+            }
+            return `"${c}" = excluded."${c}"`;
+          }).join(', ');
 
           const stmt = sqliteDb.prepare(`
             INSERT INTO attendance (${colList}) VALUES (${placeholders})
@@ -283,6 +297,30 @@ export async function pullFromFirestore(sqliteDb, collectionList = null) {
                 return val;
               });
               stmt.run(...values);
+            }
+          })();
+        } else if (col === 'mid_month_expenses') {
+          const cols = validCols.filter(c => c !== 'id');
+          const colList = cols.map(c => `"${c}"`).join(', ');
+          const placeholders = cols.map(() => '?').join(', ');
+          const stmt = sqliteDb.prepare(`
+            INSERT INTO mid_month_expenses (${colList}) VALUES (${placeholders})
+            ON CONFLICT(year, month, employee_id) DO UPDATE SET
+              amount_day_10 = excluded.amount_day_10,
+              amount_day_20 = excluded.amount_day_20,
+              total_amount = excluded.total_amount,
+              notes = excluded.notes
+          `);
+
+          sqliteDb.transaction(() => {
+            for (const doc of docs) {
+              const values = cols.map(c => {
+                const val = doc[c];
+                if (val === undefined || val === null) return null;
+                if (typeof val === 'boolean') return val ? 1 : 0;
+                return val;
+              });
+              try { stmt.run(...values); } catch (e) {}
             }
           })();
         } else {
@@ -339,7 +377,21 @@ export async function pullFreshAttendanceFromFirestore(sqliteDb) {
         const colList = cols.map(c => `"${c}"`).join(', ');
         const placeholders = cols.map(() => '?').join(', ');
         const updateCols = cols.filter(c => c !== 'employee_code' && c !== 'date');
-        const updateSet = updateCols.map(c => `"${c}" = excluded."${c}"`).join(', ');
+        const updateSet = updateCols.map(c => {
+          if (c === 'check_in') {
+            return `"check_in" = CASE WHEN excluded."check_in" IS NOT NULL AND excluded."check_in" != '' THEN excluded."check_in" ELSE attendance."check_in" END`;
+          }
+          if (c === 'check_out') {
+            return `"check_out" = CASE WHEN excluded."check_out" IS NOT NULL AND excluded."check_out" != '' THEN excluded."check_out" ELSE attendance."check_out" END`;
+          }
+          if (c === 'status') {
+            return `"status" = CASE WHEN attendance."check_in" IS NOT NULL AND attendance."check_in" != '' AND (excluded."status" = 'بدون بصمة (غير مسجل)' OR excluded."status" = 'غائب') THEN attendance."status" ELSE excluded."status" END`;
+          }
+          if (c === 'is_absent') {
+            return `"is_absent" = CASE WHEN attendance."check_in" IS NOT NULL AND attendance."check_in" != '' THEN 0 ELSE excluded."is_absent" END`;
+          }
+          return `"${c}" = excluded."${c}"`;
+        }).join(', ');
 
         const stmt = sqliteDb.prepare(`
           INSERT INTO attendance (${colList}) VALUES (${placeholders})

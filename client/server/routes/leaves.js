@@ -164,19 +164,20 @@ router.put('/:id', async (req, res) => {
 router.put('/balances/:employeeId', async (req, res) => {
   try {
     const { annual_leave_balance } = req.body;
-    if (annual_leave_balance === undefined) {
+    if (annual_leave_balance === undefined || annual_leave_balance === null) {
       return res.status(400).json({ error: 'الرصيد مطلوب' });
     }
 
+    const numBalance = Number(annual_leave_balance);
     db.prepare('UPDATE employees SET annual_leave_balance = ? WHERE id = ?')
-      .run(Number(annual_leave_balance), req.params.employeeId);
+      .run(numBalance, req.params.employeeId);
 
     const updatedEmp = db.prepare('SELECT * FROM employees WHERE id = ?').get(req.params.employeeId);
     if (updatedEmp) {
       try { await pushToSupabase('employees', updatedEmp); } catch (e) {}
     }
 
-    res.json({ success: true, message: 'تم تحديث رصيد الإجازات السنوية للموظف' });
+    res.json({ success: true, message: 'تم تحديث رصيد الإجازات السنوية للموظف', employee: updatedEmp });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

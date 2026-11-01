@@ -572,6 +572,18 @@ export function initDatabase() {
       tx_id INTEGER REFERENCES cash_transactions(id),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Essential performance indexes for ultra-fast queries
+    CREATE INDEX IF NOT EXISTS idx_attendance_emp_date ON attendance(employee_id, date);
+    CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);
+    CREATE INDEX IF NOT EXISTS idx_attendance_emp_code ON attendance(employee_code);
+    CREATE INDEX IF NOT EXISTS idx_payroll_items_run ON payroll_items(payroll_run_id);
+    CREATE INDEX IF NOT EXISTS idx_payroll_items_emp ON payroll_items(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_cash_tx_safe_date ON cash_transactions(safe_id, transaction_date);
+    CREATE INDEX IF NOT EXISTS idx_mid_month_expenses_ym ON mid_month_expenses(year, month);
+    CREATE INDEX IF NOT EXISTS idx_loans_emp_status ON loans(employee_id, status);
+    CREATE INDEX IF NOT EXISTS idx_leaves_emp_dates ON leaves(employee_id, start_date, end_date);
+    CREATE INDEX IF NOT EXISTS idx_employees_status_seq ON employees(status, seq);
   `);
 
   // Treasury module seed - create default main safe if not exists

@@ -99,7 +99,7 @@ router.post('/', async (req, res) => {
       taxable_allowances: Number(taxable_allowances) || 0,
       non_taxable_allowances: Number(non_taxable_allowances) || 0,
       medical_insurance: Number(medical_insurance) || 0,
-      annual_leave_balance: Number(annual_leave_balance) || 21,
+      annual_leave_balance: (annual_leave_balance !== undefined && annual_leave_balance !== null && annual_leave_balance !== '') ? Number(annual_leave_balance) : 21,
       password: code,
       phone: phone ? String(phone).trim() : null,
       pin_code: pin_code ? String(pin_code).trim() : null,
@@ -172,7 +172,7 @@ router.put('/:id', async (req, res) => {
       taxable_allowances: Number(taxable_allowances) || 0,
       non_taxable_allowances: Number(non_taxable_allowances) || 0,
       medical_insurance: Number(medical_insurance) || 0,
-      annual_leave_balance: Number(annual_leave_balance) || 21,
+      annual_leave_balance: (annual_leave_balance !== undefined && annual_leave_balance !== null && annual_leave_balance !== '') ? Number(annual_leave_balance) : 21,
       status: status || 'active',
       password: password || null,
       phone: phone !== undefined ? (phone ? String(phone).trim() : '') : '',
@@ -488,7 +488,7 @@ router.post('/import/confirm', async (req, res) => {
           insurance_basic: Number(emp.insurance_basic) || Number(emp.basic_salary) || 0,
           taxable_allowances: Number(emp.taxable_allowances) || 0,
           non_taxable_allowances: Number(emp.non_taxable_allowances) || 0,
-          annual_leave_balance: Number(emp.annual_leave_balance) || 21,
+          annual_leave_balance: (emp.annual_leave_balance !== undefined && emp.annual_leave_balance !== null && emp.annual_leave_balance !== '') ? Number(emp.annual_leave_balance) : 21,
           password: emp.code
         };
 

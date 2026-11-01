@@ -152,13 +152,10 @@ router.post('/generate', async (req, res) => {
       loanMap.set(l.employee_id, cur + l.monthly_installment);
     });
 
-    // Check existing item adjustments to preserve manual overrides if any
+    // Fetch existing items to preserve manual adjustments
     const existingItemsMap = new Map();
     const existingItems = db.prepare('SELECT * FROM payroll_items WHERE payroll_run_id = ?').all(run.id);
     existingItems.forEach(i => existingItemsMap.set(i.employee_id, i));
-
-    // Delete previous items for this run and insert fresh calculated items
-    db.prepare('DELETE FROM payroll_items WHERE payroll_run_id = ?').run(run.id);
 
     const insertItem = db.prepare(`
       INSERT INTO payroll_items (
@@ -193,6 +190,7 @@ router.post('/generate', async (req, res) => {
     `);
 
     const insertTransaction = db.transaction(() => {
+      db.prepare('DELETE FROM payroll_items WHERE payroll_run_id = ?').run(run.id);
       employees.forEach(emp => {
         const att = attMap.get(String(emp.code).trim()) || { absent_days: 0, total_overtime_days: 0 };
         const existing = existingItemsMap.get(emp.id);

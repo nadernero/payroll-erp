@@ -57,9 +57,6 @@ export default function PayrollPage() {
         setYear(allRuns[0].year);
         setMonth(allRuns[0].month);
         loadRunDetails(allRuns[0].id);
-      } else {
-        // Auto generate 2026-09 if empty
-        handleGenerate(2026, 9);
       }
     } catch (err) {
       console.error(err);
@@ -85,13 +82,16 @@ export default function PayrollPage() {
   }, []);
 
   const handleGenerate = async (y = year, m = month) => {
+    if (generating) return;
     try {
       setGenerating(true);
       const res = await fetchJson('/payroll/generate', {
         method: 'POST',
         body: JSON.stringify({ year: y, month: m })
       });
-      loadRunDetails(res.runId);
+      if (res.runId) {
+        await loadRunDetails(res.runId);
+      }
       const allRuns = await fetchJson('/payroll/runs');
       setRuns(allRuns);
     } catch (err) {

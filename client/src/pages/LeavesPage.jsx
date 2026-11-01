@@ -112,15 +112,32 @@ export default function LeavesPage() {
 
   const handleSaveBalance = async (e) => {
     e.preventDefault();
+    if (!editingBalanceEmp) return;
+    const targetId = editingBalanceEmp.id;
+    const numVal = Number(newBalanceValue);
+
+    // Optimistically update the UI state immediately on first click
+    setBalances(prev => prev.map(b => {
+      if (b.id === targetId) {
+        const used = Number(b.used_leaves) || 0;
+        return {
+          ...b,
+          total_balance: numVal,
+          remaining_balance: numVal - used
+        };
+      }
+      return b;
+    }));
+    setEditingBalanceEmp(null);
+
     try {
-      await fetchJson(`/leaves/balances/${editingBalanceEmp.id}`, {
+      await fetchJson(`/leaves/balances/${targetId}`, {
         method: 'PUT',
-        body: JSON.stringify({ annual_leave_balance: newBalanceValue })
+        body: JSON.stringify({ annual_leave_balance: numVal })
       });
-      setEditingBalanceEmp(null);
-      loadData();
     } catch (err) {
       alert(err.message);
+      loadData();
     }
   };
 

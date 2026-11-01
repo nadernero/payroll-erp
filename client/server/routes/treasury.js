@@ -487,19 +487,28 @@ router.post('/transactions', async (req, res) => {
     const DEBIT_TYPES  = ['expense', 'transfer_out', 'salary_payment', 'custody_return', 'sub_replenish'];
     const CREDIT_TYPES = ['custody_receive', 'income', 'transfer_in', 'farm_sale'];
 
-    let newBalance = safe.current_balance;
-    if (DEBIT_TYPES.includes(type)) {
-      if (amt > safe.current_balance) {
-        return res.status(400).json({
-          error: `الرصيد الحالي (${safe.current_balance.toLocaleString('ar-EG')} ج.م) لا يكفي لهذه العملية`
-        });
-      }
-      newBalance = safe.current_balance - amt;
-    } else if (CREDIT_TYPES.includes(type)) {
-      newBalance = safe.current_balance + amt;
-    }
+    let finalBalanceBefore = 0;
+    let finalBalanceAfter = 0;
 
     const txResult = db.transaction(() => {
+      // Atomically read latest safe balance inside transaction to prevent race conditions
+      const liveSafe = db.prepare('SELECT current_balance FROM cash_safes WHERE id = ?').get(safe_id);
+      const liveBalance = liveSafe ? Number(liveSafe.current_balance) : 0;
+
+      if (DEBIT_TYPES.includes(type)) {
+        if (amt > liveBalance) {
+          throw new Error(`الرصيد الحالي (${liveBalance.toLocaleString('ar-EG')} ج.م) لا يكفي لهذه العملية`);
+        }
+        finalBalanceBefore = liveBalance;
+        finalBalanceAfter = liveBalance - amt;
+      } else if (CREDIT_TYPES.includes(type)) {
+        finalBalanceBefore = liveBalance;
+        finalBalanceAfter = liveBalance + amt;
+      } else {
+        finalBalanceBefore = liveBalance;
+        finalBalanceAfter = liveBalance;
+      }
+
       // Insert transaction
       const txStmt = db.prepare(`
         INSERT INTO cash_transactions
@@ -511,7 +520,7 @@ router.post('/transactions', async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const txRes = txStmt.run(
-        safe_id, type, amt, safe.current_balance, newBalance,
+        safe_id, type, amt, finalBalanceBefore, finalBalanceAfter,
         description.trim(), finalRefNo || null,
         related_employee_id || null, related_employee_name || null,
         related_safe_id || null,
@@ -529,7 +538,7 @@ router.post('/transactions', async (req, res) => {
 
       // Update safe balance
       db.prepare('UPDATE cash_safes SET current_balance = ? WHERE id = ?')
-        .run(newBalance, safe_id);
+        .run(finalBalanceAfter, safe_id);
 
       // If transfer between safes: create mirror transaction on related safe
       if (type === 'transfer_out' && related_safe_id) {
@@ -575,23 +584,27 @@ router.post('/transactions', async (req, res) => {
           transaction_date,
           type,
           denomination,
-          newBalance,
+          finalBalanceAfter,
           description.trim()
         );
       }
 
-      return { txId: txRes.lastInsertRowid, denomId, newBalance, reference_no: finalRefNo };
+      return { txId: txRes.lastInsertRowid, denomId, newBalance: finalBalanceAfter, reference_no: finalRefNo };
     })();
 
     const tx = db.prepare('SELECT * FROM cash_transactions WHERE id = ?').get(txResult.txId);
     
-    // Live push to Supabase
-    await pushToSupabase('cash_transactions', tx);
-    const safeUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
-    if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
-    if (related_safe_id) {
-      const relUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(related_safe_id);
-      if (relUpdated) await pushToSupabase('cash_safes', relUpdated);
+    // Live push to Firestore safely
+    try {
+      await pushToSupabase('cash_transactions', tx);
+      const safeUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(safe_id);
+      if (safeUpdated) await pushToSupabase('cash_safes', safeUpdated);
+      if (related_safe_id) {
+        const relUpdated = db.prepare('SELECT * FROM cash_safes WHERE id = ?').get(related_safe_id);
+        if (relUpdated) await pushToSupabase('cash_safes', relUpdated);
+      }
+    } catch (syncErr) {
+      console.warn('Firestore live push notice (treasury transaction):', syncErr.message);
     }
 
     res.status(201).json({
