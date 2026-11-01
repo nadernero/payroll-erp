@@ -113,6 +113,41 @@ app.get(['/api/health', '/health'], (req, res) => {
   });
 });
 
+app.get(['/api/debug-diag', '/debug-diag'], async (req, res) => {
+  const diag = {};
+  diag.nodeVersion = process.version;
+  diag.platform = process.platform;
+  diag.env_vercel = !!process.env.VERCEL;
+  diag.cwd = process.cwd();
+  try {
+    const { getFirestore } = await import('firebase-admin/firestore');
+    diag.firestoreImport = 'OK';
+  } catch (e) {
+    diag.firestoreImport = e.message;
+  }
+  try {
+    const { default: dbInstance } = await import('./db.js');
+    diag.dbInstance = !!dbInstance;
+    diag.dbPrepare = typeof dbInstance?.prepare;
+    try {
+      const c = dbInstance.prepare('SELECT 1 as val').get();
+      diag.dbQuery = c;
+    } catch (qe) {
+      diag.dbQueryError = qe.message;
+    }
+    try {
+      const empCount = dbInstance.prepare('SELECT COUNT(*) as c FROM employees').get();
+      diag.empCount = empCount.c;
+    } catch (empErr) {
+      diag.empError = empErr.message;
+    }
+  } catch (dbe) {
+    diag.dbError = dbe.message;
+    diag.dbStack = dbe.stack;
+  }
+  res.json(diag);
+});
+
 // Diagnostic debug endpoint
 app.get(['/api/debug-db', '/debug-db'], async (req, res) => {
   try {
